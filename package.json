@@ -1,0 +1,31 @@
+{
+  "name": "koishi-plugin-sauce-aggregator",
+  "description": "简单的聚合搜图插件，目前支持saucenao，iqdb，trace.moe。添加yande.re, gelbooru图源支持。",
+  "version": "1.1.0",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib"
+  ],
+  "license": "MIT",
+  "scripts": {},
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin",
+    "image",
+    "search",
+    "sauce",
+    "saucenao",
+    "trace.moe",
+    "iqdb"
+  ],
+  "peerDependencies": {
+    "koishi": "^4.18.7"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "form-data": "^4.0.0",
+    "sharp": "^0.34.3"
+  }
+}
