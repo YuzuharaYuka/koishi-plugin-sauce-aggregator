@@ -1,13 +1,10 @@
-// --- START OF FILE searchers/iqdb.ts ---
-
 import { Context, Logger } from 'koishi'
-import { Searcher, SearchOptions, IQDB as IQDBConfig } from '../config'
+import { Searcher, SearchOptions, IQDB as IQDBConfig, DebugConfig, SearchEngineName, Config } from '../config'
 import * as cheerio from 'cheerio'
-import FormData from 'form-data'
+import { USER_AGENT } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
-// 辅助函数：将 IQDB 的相对链接补全为可访问的 URL
 function fixedHref (href: string): string {
   if (!href) return ''
   if (href.startsWith('//')) {
@@ -18,7 +15,6 @@ function fixedHref (href: string): string {
   return href
 }
 
-// 辅助函数：解析 <img> alt 属性中的评分和标签
 function parseImageProperties(alt: string) {
     if (!alt) return { score: undefined, tags: undefined }
     const parts = alt.split(' ')
@@ -56,34 +52,49 @@ function parseImageProperties(alt: string) {
 }
 
 export class IQDB implements Searcher<IQDBConfig.Config> {
-  name = 'iqdb'
+  public readonly name: SearchEngineName = 'iqdb';
+  private timeout: number;
   
-  constructor(public ctx: Context, public config: IQDBConfig.Config, public debug: boolean) {}
+  constructor(public ctx: Context, public config: IQDBConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
+      this.timeout = pluginConfig.requestTimeout * 1000;
+  }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const form = new FormData()
-    form.append('file', options.imageBuffer, options.fileName)
+    const safeBuffer = Buffer.from(options.imageBuffer);
+    form.append('file', new Blob([safeBuffer]), options.fileName)
     
     const url = 'https://iqdb.org/'
-    if (this.debug) logger.info(`[iqdb] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
+    if (this.debugConfig.enabled) logger.info(`[iqdb] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
 
     try {
-      // **FIXED**: 回退到使用 getBuffer() 和 getHeaders() 的工作方式
-      const html = await this.ctx.http.post(url, form.getBuffer(), {
+      const html = await this.ctx.http.post(url, form, {
         headers: { 
-            ...form.getHeaders(),
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'User-Agent': USER_AGENT,
             'Referer': 'https://iqdb.org/',
         },
+        timeout: this.timeout,
       })
-      logger.info(`[iqdb] 收到响应页面，长度: ${html.length}`)
+
+      if (this.debugConfig.enabled) logger.info(`[iqdb] 收到响应页面，长度: ${html.length}`)
+      if (this.debugConfig.logApiResponses.includes(this.name)) {
+        logger.info(`[iqdb] Raw HTML: ${html.substring(0, 2000)}...`);
+      }
+      
+      if (html.includes('File is too large')) throw new Error('图片体积过大 (超过 8MB 限制)。');
+      if (html.includes('You are searching too much.')) throw new Error('搜索过于频繁，请稍后再试。');
 
       const $ = cheerio.load(html)
       const results: Searcher.Result[] = []
       const resultElements = $('#pages > div, #more1 > .pages > div')
 
-      if (resultElements.length === 0 && !html.includes('No relevant results found')) {
-        if (this.debug) logger.warn('[iqdb] 页面结构可能已更改，未找到结果容器。')
+      if (resultElements.length === 0) {
+        if (html.includes('No relevant results found')) return []
+        
+        if (this.debugConfig.enabled) {
+          logger.warn('[iqdb] 页面结构可能已更改，未找到结果容器。')
+          logger.info(`[iqdb] Raw HTML for debugging:\n${html}`);
+        }
         return []
       }
 
@@ -133,14 +144,14 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
               details,
           })
         } catch (parseError) {
-          if (this.debug) logger.error('[iqdb] 解析单个结果时出错:', parseError)
+          if (this.debugConfig.enabled) logger.error('[iqdb] 解析单个结果时出错:', parseError)
         }
       })
       
       return results.filter(r => r.thumbnail && r.url)
     } catch (error) {
       logger.warn(`[iqdb] 请求出错: ${error.message}`)
-      if (this.debug && error.response) {
+      if (this.debugConfig.enabled && error.response) {
         logger.debug(`[iqdb] 响应状态: ${error.response.status}`)
         logger.debug(`[iqdb] 响应数据: ${JSON.stringify(error.response.data)}`)
       }

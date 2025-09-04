@@ -1,5 +1,7 @@
 import { Schema, Context, h } from 'koishi';
 import { Buffer } from 'buffer';
+export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d';
+export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru';
 export interface SearchOptions {
     imageUrl: string;
     imageBuffer: Buffer;
@@ -24,40 +26,49 @@ export interface EnhancedResult {
     imageBuffer?: Buffer;
     imageType?: string;
 }
+export interface DebugConfig {
+    enabled: boolean;
+    logApiResponses: (SearchEngineName | EnhancerName)[];
+}
 export declare abstract class Enhancer<T = any> {
     ctx: Context;
     config: T;
-    debug: boolean;
-    abstract name: 'yandere' | 'gelbooru';
-    constructor(ctx: Context, config: T, debug: boolean);
+    debugConfig: DebugConfig;
+    abstract name: EnhancerName;
+    constructor(ctx: Context, config: T, debugConfig: DebugConfig);
     abstract enhance(result: Searcher.Result): Promise<EnhancedResult | null>;
 }
 export declare abstract class Searcher<T = any> {
     ctx: Context;
     config: T;
-    debug: boolean;
-    abstract name: string;
-    constructor(ctx: Context, config: T, debug: boolean);
+    debugConfig: DebugConfig;
+    abstract name: SearchEngineName;
+    constructor(ctx: Context, config: T, debugConfig: DebugConfig);
     abstract search(options: SearchOptions): Promise<Searcher.Result[]>;
 }
 export interface Config {
-    debug: boolean;
     order: {
-        engine: 'saucenao' | 'iqdb' | 'tracemoe';
+        engine: SearchEngineName;
         enabled: boolean;
     }[];
     enhancerOrder: {
-        engine: 'yandere' | 'gelbooru';
+        engine: EnhancerName;
         enabled: boolean;
     }[];
     confidenceThreshold: number;
     maxResults: number;
     promptTimeout: number;
+    requestTimeout: number;
+    chromeExecutablePath: string;
+    debug: DebugConfig;
     saucenao: SauceNAO.Config;
     tracemoe: TraceMoe.Config;
     iqdb: IQDB.Config;
+    yandex: Yandex.Config;
     yandere: YandeRe.Config;
     gelbooru: Gelbooru.Config;
+    danbooru: Danbooru.Config;
+    ascii2d: Ascii2D.Config;
 }
 export declare namespace SauceNAO {
     interface Config {
@@ -71,6 +82,12 @@ export declare namespace TraceMoe {
 }
 export declare namespace IQDB {
     interface Config {
+    }
+}
+export declare namespace Yandex {
+    interface Config {
+        alwaysAttach: boolean;
+        domain: 'ya.ru' | 'yandex.com';
     }
 }
 export declare namespace YandeRe {
@@ -89,6 +106,22 @@ export declare namespace Gelbooru {
         }[];
         postQuality: 'original' | 'sample' | 'preview';
         maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit';
+    }
+}
+export declare namespace Danbooru {
+    interface Config {
+        enabled: boolean;
+        keyPairs: {
+            username: string;
+            apiKey: string;
+        }[];
+        postQuality: 'original' | 'sample' | 'preview';
+        maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit';
+    }
+}
+export declare namespace Ascii2D {
+    interface Config {
+        alwaysAttach: boolean;
     }
 }
 export declare const Config: Schema<Config>;

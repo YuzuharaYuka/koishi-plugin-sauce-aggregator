@@ -1,58 +1,20 @@
-// --- START OF FILE searchers/saucenao.ts ---
-
 import { Context, Logger } from 'koishi'
-import { Searcher, SearchOptions, SauceNAO as SauceNAOConfig } from '../config'
-import FormData from 'form-data'
+import { Searcher, SearchOptions, SauceNAO as SauceNAOConfig, DebugConfig, SearchEngineName, Config } from '../config'
 const logger = new Logger('sauce-aggregator')
 
-// Based on the official Index Details file provided by the user.
 const saucenaoIndexMap: Record<number, string> = {
-  0: 'H-Mags',
-  2: 'H-Game CG',
-  4: 'HCG',
-  5: 'Pixiv',
-  6: 'Pixiv Historical',
-  8: 'Nico Nico Seiga',
-  9: 'Danbooru',
-  10: 'Drawr',
-  11: 'Nijie',
-  12: 'Yande.re',
-  16: 'FAKKU',
-  18: 'H-Misc (nhentai)',
-  19: '2D-Market',
-  20: 'MediBang',
-  21: 'Anime',
-  22: 'H-Anime',
-  23: 'Movies',
-  24: 'Shows',
-  25: 'Gelbooru',
-  26: 'Konachan',
-  27: 'Sankaku Channel',
-  28: 'Anime-Pictures',
-  29: 'e621',
-  30: 'Idol Complex',
-  31: 'BCY Illust',
-  32: 'BCY Cosplay',
-  33: 'PortalGraphics',
-  34: 'deviantArt',
-  35: 'Pawoo',
-  36: 'Madokami',
-  37: 'MangaDex',
-  38: 'H-Misc (e-hentai)',
-  39: 'ArtStation',
-  40: 'FurAffinity',
-  41: 'Twitter',
-  42: 'Furry Network',
-  43: 'Kemono',
-  44: 'Skeb',
+  0: 'H-Mags', 2: 'H-Game CG', 4: 'HCG', 5: 'Pixiv', 6: 'Pixiv Historical', 8: 'Nico Nico Seiga', 9: 'Danbooru', 10: 'Drawr', 11: 'Nijie', 12: 'Yande.re', 16: 'FAKKU', 18: 'H-Misc (nhentai)', 19: '2D-Market', 20: 'MediBang', 21: 'Anime', 22: 'H-Anime', 23: 'Movies', 24: 'Shows', 25: 'Gelbooru', 26: 'Konachan', 27: 'Sankaku Channel', 28: 'Anime-Pictures', 29: 'e621', 30: 'Idol Complex', 31: 'BCY Illust', 32: 'BCY Cosplay', 33: 'PortalGraphics', 34: 'deviantArt', 35: 'Pawoo', 36: 'Madokami', 37: 'MangaDex', 38: 'H-Misc (e-hentai)', 39: 'ArtStation', 40: 'FurAffinity', 41: 'Twitter', 42: 'Furry Network', 43: 'Kemono', 44: 'Skeb',
 }
 
 
 export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
-  name = 'saucenao'
+  public readonly name: SearchEngineName = 'saucenao';
   private keyIndex = 0
+  private timeout: number;
   
-  constructor(public ctx: Context, public config: SauceNAOConfig.Config, public debug: boolean) {}
+  constructor(public ctx: Context, public config: SauceNAOConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
+      this.timeout = pluginConfig.requestTimeout * 1000;
+  }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const apiKeys = this.config.apiKeys;
@@ -62,32 +24,42 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
     }
     
     const currentApiKey = apiKeys[this.keyIndex];
-    if (this.debug) {
+    if (this.debugConfig.enabled) {
       logger.info(`[saucenao] 使用 API Key 列表中的第 ${this.keyIndex + 1} 个 Key。`);
     }
     this.keyIndex = (this.keyIndex + 1) % apiKeys.length;
 
     const form = new FormData()
-    form.append('output_type', 2)
+    form.append('output_type', '2')
     form.append('api_key', currentApiKey)
-    form.append('file', options.imageBuffer, options.fileName)
+    const safeBuffer = Buffer.from(options.imageBuffer);
+    form.append('file', new Blob([safeBuffer]), options.fileName)
 
     const url = 'https://saucenao.com/search.php'
-    if (this.debug) logger.info(`[saucenao] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
+    if (this.debugConfig.enabled) logger.info(`[saucenao] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
 
     try {
-      // **FIXED**: 回退到使用 getBuffer() 和 getHeaders() 的工作方式
-      const data = await this.ctx.http.post(url, form.getBuffer(), { headers: form.getHeaders() })
+      const data = await this.ctx.http.post(url, form, { timeout: this.timeout })
       
-      if (this.debug) logger.info(`[saucenao] 收到响应: ${JSON.stringify(data, null, 2)}`)
+      if (this.debugConfig.logApiResponses.includes(this.name)) {
+        logger.info(`[saucenao] 收到响应: ${JSON.stringify(data, null, 2)}`)
+      }
       
       if (!data?.header) {
           logger.warn('[saucenao] 响应格式不正确，缺少 header。')
           return []
       }
-      if (data.header.status !== 0) {
-          logger.warn(`[saucenao] API 返回错误状态: ${data.header.status}。消息: ${data.header.message || '未知错误'}`)
-          return []
+      if (data.header.status > 0) {
+          throw new Error(`API 返回错误: ${data.header.message || '未知服务器端错误'}`)
+      }
+      if (data.header.status < 0) {
+          if (data.header.message.includes('Search Rate Too High')) {
+              throw new Error('搜索过于频繁 (30秒内限制)，请稍后再试。')
+          }
+          if (data.header.message.includes('Daily Search Limit Exceeded')) {
+              throw new Error('今日搜索额度已用尽，请检查或更换 API Key。')
+          }
+          throw new Error(`API 返回错误: ${data.header.message || '未知客户端错误'}`)
       }
       
       if (!data.results) return []
@@ -98,10 +70,8 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
           const ext_urls = data.ext_urls;
           const details: string[] = [];
 
-          // Use the new map to get a clean engine name
           const sourceEngine = saucenaoIndexMap[header.index_id] || header.index_name.split(' - ')[0];
 
-          // Add metadata from the 'data' object
           if (data.material) details.push(`作品: ${data.material}`);
           if (data.characters) details.push(`角色: ${data.characters}`);
           if (data.company) details.push(`公司: ${data.company}`);
@@ -109,11 +79,9 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
           if (data.year) details.push(`年份: ${data.year}`);
           if (data.est_time) details.push(`时间: ${data.est_time}`);
         
-          // Create a unique list of all URLs from both data.source and data.ext_urls
           const allUrls = [...new Set([data.source, ...ext_urls].filter(Boolean))];
           
           allUrls.forEach(url => {
-            // The main URL is already returned in the 'url' field, so we just add the others as details.
             if (url === ext_urls[0]) return;
             
             let siteName = '其他来源';
@@ -147,7 +115,7 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
         })
     } catch (error) {
         logger.warn(`[saucenao] 请求出错: ${error.message}`)
-        if (this.debug && error.response) {
+        if (this.debugConfig.enabled && error.response) {
             logger.debug(`[saucenao] 响应状态: ${error.response.status}`)
             logger.debug(`[saucenao] 响应数据: ${JSON.stringify(error.response.data)}`)
         }

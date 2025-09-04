@@ -1,28 +1,36 @@
-// --- START OF FILE searchers/tracemoe.ts ---
-
 import { Context, Logger } from 'koishi'
-import { Searcher, SearchOptions, TraceMoe as TraceMoeConfig } from '../config'
-import FormData from 'form-data'
+import { Searcher, SearchOptions, TraceMoe as TraceMoeConfig, DebugConfig, SearchEngineName, Config } from '../config'
 const logger = new Logger('sauce-aggregator')
 
 export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
-  name = 'tracemoe'
+  public readonly name: SearchEngineName = 'tracemoe';
+  private timeout: number;
   
-  constructor(public ctx: Context, public config: TraceMoeConfig.Config, public debug: boolean) {}
+  constructor(public ctx: Context, public config: TraceMoeConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
+      this.timeout = pluginConfig.requestTimeout * 1000;
+  }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const form = new FormData()
-    form.append('image', options.imageBuffer, options.fileName)
+    const safeBuffer = Buffer.from(options.imageBuffer);
+    form.append('image', new Blob([safeBuffer]), options.fileName)
     
     const url = 'https://api.trace.moe/search?cutBorders&anilistInfo'
     
-    if (this.debug) logger.info(`[tracemoe] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
+    if (this.debugConfig.enabled) logger.info(`[tracemoe] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
     
     try {
-      // **FIXED**: 回退到使用 getBuffer() 和 getHeaders() 的工作方式
-      const { result } = await this.ctx.http.post(url, form.getBuffer(), { headers: form.getHeaders() })
-      if (this.debug) logger.info(`[tracemoe] 收到响应: ${JSON.stringify(result, null, 2)}`)
+      const data = await this.ctx.http.post(url, form, { timeout: this.timeout })
+      
+      if (this.debugConfig.logApiResponses.includes(this.name)) {
+        logger.info(`[tracemoe] 收到响应: ${JSON.stringify(data, null, 2)}`)
+      }
 
+      if (data.error) {
+        throw new Error(`API 返回错误: ${data.error}`)
+      }
+
+      const { result } = data
       if (!result || result.length === 0) return []
 
       const uniqueResults = []
@@ -85,7 +93,7 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
       })
     } catch (error) {
       logger.warn(`[tracemoe] 请求出错: ${error.message}`)
-      if (this.debug && error.response) {
+      if (this.debugConfig.enabled && error.response) {
         logger.debug(`[tracemoe] 响应状态: ${error.response.status}`)
         logger.debug(`[tracemoe] 响应数据: ${JSON.stringify(error.response.data)}`)
       }
