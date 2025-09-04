@@ -91,6 +91,3 @@ sauce a [图片]
 ### 调试配置
 - **`enabled`**: 启用调试模式，将在控制台输出详细的执行日志。
 - **`logApiResponses`**: 选择要将 API 或页面原始返回信息输出到日志的引擎或图源。
-```
-
---- END OF FILE readme.md ---
