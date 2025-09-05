@@ -92,14 +92,12 @@ export declare namespace Yandex {
 }
 export declare namespace YandeRe {
     interface Config {
-        enabled: boolean;
         postQuality: 'jpeg' | 'sample' | 'original';
         maxRating: 's' | 'q' | 'e';
     }
 }
 export declare namespace Gelbooru {
     interface Config {
-        enabled: boolean;
         keyPairs: {
             userId: string;
             apiKey: string;
@@ -110,7 +108,6 @@ export declare namespace Gelbooru {
 }
 export declare namespace Danbooru {
     interface Config {
-        enabled: boolean;
         keyPairs: {
             username: string;
             apiKey: string;

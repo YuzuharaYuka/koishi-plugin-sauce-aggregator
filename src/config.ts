@@ -1,3 +1,5 @@
+// --- START OF FILE config.ts ---
+
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
@@ -81,7 +83,6 @@ export namespace Yandex {
 
 export namespace YandeRe {
   export interface Config {
-    enabled: boolean
     postQuality: 'jpeg' | 'sample' | 'original'
     maxRating: 's' | 'q' | 'e'
   }
@@ -89,7 +90,6 @@ export namespace YandeRe {
 
 export namespace Gelbooru {
     export interface Config {
-        enabled: boolean
         keyPairs: { userId: string; apiKey: string }[]
         postQuality: 'original' | 'sample' | 'preview'
         maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'
@@ -98,7 +98,6 @@ export namespace Gelbooru {
 
 export namespace Danbooru {
     export interface Config {
-        enabled: boolean
         keyPairs: { username: string; apiKey: string }[]
         postQuality: 'original' | 'sample' | 'preview'
         maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'
@@ -137,7 +136,7 @@ export const Config: Schema<Config> = Schema.object({
       { engine: 'gelbooru', enabled: true },
       { engine: 'danbooru', enabled: true },
     ])
-    .description('结果增强图源。找到高匹配度结果后，将按此顺序尝试获取更详细信息。'),
+    .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按此顺序尝试获取更详细信息。'),
   
   confidenceThreshold: Schema.number().default(85).min(0).max(100).description('高匹配度阈值 (%)。结果相似度高于此值时将直接返回，不再继续搜索。'),
   maxResults: Schema.number().default(2).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
@@ -172,7 +171,6 @@ export const Config: Schema<Config> = Schema.object({
   }).description('Ascii2D 设置'),
 
   yandere: Schema.object({
-    enabled: Schema.boolean().default(true).description('启用 Yande.re 图源。'),
     postQuality: Schema.union([
       Schema.const('original').description('原图'),
       Schema.const('jpeg').description('中等图'),
@@ -186,7 +184,6 @@ export const Config: Schema<Config> = Schema.object({
   }).description('Yande.re 图源设置'),
   
   gelbooru: Schema.object({
-    enabled: Schema.boolean().default(false).description('启用 Gelbooru 图源。'),
     keyPairs: Schema.array(Schema.object({
         userId: Schema.string().description('User ID').required(),
         apiKey: Schema.string().role('secret').description('API Key').required(),
@@ -205,7 +202,6 @@ export const Config: Schema<Config> = Schema.object({
     }).description('Gelbooru 图源设置'),
 
     danbooru: Schema.object({
-        enabled: Schema.boolean().default(false).description('启用 Danbooru 图源。'),
         keyPairs: Schema.array(Schema.object({
             username: Schema.string().description('用户名 (Login Name)').required(),
             apiKey: Schema.string().role('secret').description('API Key').required(),

@@ -1,3 +1,5 @@
+// --- START OF FILE index.ts ---
+
 import { Context, Logger, h } from 'koishi'
 import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName } from './config'
 import { SauceNAO } from './searchers/saucenao'
@@ -5,7 +7,8 @@ import { TraceMoe } from './searchers/tracemoe'
 import { IQDB } from './searchers/iqdb'
 import { Yandex } from './searchers/yandex'
 import { Ascii2D } from './searchers/ascii2d'
-import sharp from 'sharp'
+import * as PImage from 'pureimage'
+import { Readable, PassThrough } from 'stream'
 import { Buffer } from 'buffer'
 import { YandeReEnhancer } from './enhancers/yande'
 import { GelbooruEnhancer } from './enhancers/gelbooru'
@@ -39,15 +42,52 @@ export const usage = `
 ####	为绕过机器人脚本防护，yandex, ascii2d, danbooru部分使用浏览器实例实现，响应速度相对较慢。
 `
 
+function detectImageType(buffer: Buffer): 'jpeg' | 'png' | null {
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'jpeg';
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'png';
+  return null;
+}
+
 async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<Buffer> {
   const ONE_MB = 1024 * 1024;
   if (buffer.length <= maxSizeInMB * ONE_MB) return buffer;
+
   logger.info(`图片体积 (${(buffer.length / ONE_MB).toFixed(2)}MB) 超出 ${maxSizeInMB}MB，正在压缩...`);
+  
   try {
-    return await sharp(buffer)
-      .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 85 })
-      .toBuffer();
+    const imageType = detectImageType(buffer);
+    if (!imageType) {
+      logger.warn(`[preprocess] 不支持的图片格式，无法压缩。将使用原图。`);
+      return buffer;
+    }
+
+    const stream = Readable.from(buffer);
+    const image = imageType === 'jpeg'
+      ? await PImage.decodeJPEGFromStream(stream)
+      : await PImage.decodePNGFromStream(stream);
+
+    const MAX_DIMENSION = 2000;
+    const ratio = Math.min(MAX_DIMENSION / image.width, MAX_DIMENSION / image.height, 1);
+    const newWidth = Math.round(image.width * ratio);
+    const newHeight = Math.round(image.height * ratio);
+
+    const newCanvas = PImage.make(newWidth, newHeight);
+    const ctx = newCanvas.getContext('2d');
+    ctx.drawImage(image, 0, 0, image.width, image.height, 0, 0, newWidth, newHeight);
+
+    const passThrough = new PassThrough();
+    const chunks: Buffer[] = [];
+    passThrough.on('data', chunk => chunks.push(chunk));
+    
+    const encodePromise = imageType === 'jpeg'
+      ? PImage.encodeJPEGToStream(newCanvas, passThrough, 90)
+      : PImage.encodePNGToStream(newCanvas, passThrough);
+
+    await encodePromise;
+    const finalBuffer = Buffer.concat(chunks);
+    logger.info(`[preprocess] 图片压缩完成，新体积: ${(finalBuffer.length / ONE_MB).toFixed(2)}MB`);
+    return finalBuffer;
+
   } catch (error) {
     logger.error('图片压缩失败:', error);
     return buffer;
@@ -96,16 +136,14 @@ export function apply(ctx: Context, config: Config) {
       const entry = enhancerRegistry[name];
       const generalConfig = config[name];
   
-      if (generalConfig.enabled) {
-          if (!entry.needsKeys || (Array.isArray(entry.keys) && entry.keys.length > 0)) {
-              const constructorArgs: any[] = [ctx, generalConfig, config.debug];
-              if (name === 'yandere' || name === 'gelbooru') constructorArgs.push(config);
-              if (entry.requiresPuppeteer) constructorArgs.push(puppeteerManager);
-              
-              allEnhancers[name] = new entry.constructor(...constructorArgs);
-          } else {
-              logger.info(`[${name}] ${entry.messageName}已启用但未配置任何${entry.keyName}，已禁用。`);
-          }
+      if (!entry.needsKeys || (Array.isArray(entry.keys) && entry.keys.length > 0)) {
+          const constructorArgs: any[] = [ctx, generalConfig, config.debug];
+          if (name === 'yandere' || name === 'gelbooru') constructorArgs.push(config);
+          if (entry.requiresPuppeteer) constructorArgs.push(puppeteerManager);
+          
+          allEnhancers[name] = new entry.constructor(...constructorArgs);
+      } else {
+          logger.info(`[${name}] ${entry.messageName}未配置任何${entry.keyName}，将无法启用。`);
       }
   }
   
@@ -125,6 +163,13 @@ export function apply(ctx: Context, config: Config) {
     .option('all', '-a, --all 返回所有启用的引擎搜索结果')
     .action(async ({ session, options }, text) => {
         const { searchersToUse, imageInput, isSingleEngineSpecified } = parseInput(text, options);
+
+        if (isSingleEngineSpecified) {
+            if (searchersToUse.length === 0) return '指定的搜图引擎无效或未正确配置。';
+        } else {
+            if (allEnabledSearchers.length === 0) return '沒有啟用或指定任何有效的搜图引擎。';
+        }
+
         return searchLogic(searchersToUse, imageInput, isSingleEngineSpecified, { session, options });
     });
 
@@ -159,10 +204,6 @@ export function apply(ctx: Context, config: Config) {
   }
 
   async function searchLogic(searchers: Searcher[], image: string, isSingleEngineSpecified: boolean, { session, options }) {
-      if (searchers.length === 0 && !config.yandex.alwaysAttach && !config.ascii2d.alwaysAttach) {
-          return '没有启用或指定任何有效的搜图引擎。';
-      }
-
       let imgData = getImageUrlAndName(session, image);
       
       if (!imgData.url) {
