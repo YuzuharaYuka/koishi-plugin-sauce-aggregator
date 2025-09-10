@@ -1,6 +1,6 @@
 import { Schema, Context, h } from 'koishi';
 import { Buffer } from 'buffer';
-export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d';
+export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot';
 export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru';
 export interface SearchOptions {
     imageUrl: string;
@@ -69,19 +69,23 @@ export interface Config {
     gelbooru: Gelbooru.Config;
     danbooru: Danbooru.Config;
     ascii2d: Ascii2D.Config;
+    soutubot: SoutuBot.Config;
 }
 export declare namespace SauceNAO {
     interface Config {
         apiKeys: string[];
+        confidenceThreshold?: number;
     }
 }
 export declare namespace TraceMoe {
     interface Config {
         sendVideoPreview: boolean;
+        confidenceThreshold?: number;
     }
 }
 export declare namespace IQDB {
     interface Config {
+        confidenceThreshold?: number;
     }
 }
 export declare namespace Yandex {
@@ -119,6 +123,12 @@ export declare namespace Danbooru {
 export declare namespace Ascii2D {
     interface Config {
         alwaysAttach: boolean;
+    }
+}
+export declare namespace SoutuBot {
+    interface Config {
+        confidenceThreshold?: number;
+        maxHighConfidenceResults?: number;
     }
 }
 export declare const Config: Schema<Config>;

@@ -1,19 +1,18 @@
 {
   "name": "koishi-plugin-sauce-aggregator",
-  "description": "聚合搜图插件. 目前支持saucenao, iqdb, trace.moe, yandex搜图; yande.re, gelbooru, danbooru图源. 添加ascii2d支持.",
-  "version": "1.5.2",
+  "description": "聚合搜图插件。目前支持saucenao, iqdb, trace.moe, ascii2d, yandex搜图; yande.re, gelbooru, danbooru图源。添加搜图bot酱支持。",
+  "version": "1.6.0",
   "homepage": "https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator",
   "repository": {
-	"type": "git",
-	"url": "git+https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator.git"
-	},
+    "type": "git",
+    "url": "git+https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator.git"
+  },
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
     "lib"
   ],
   "license": "MIT",
-  "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
@@ -33,12 +32,13 @@
     "koishi": "^4.18.7"
   },
   "dependencies": {
-    "cheerio": "^1.0.0",
-    "form-data": "^4.0.0",
-    "pureimage": "^0.4.18",
-    "puppeteer-core": "^24.18.0",
+    "@puppeteer/browsers": "^2.10.0",
+    "cheerio": "^1.1.2",
+    "form-data": "^4.0.4",
+    "puppeteer-core": "^24.19.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "puppeteer-finder": "^1.1.1"
-    }
+    "puppeteer-finder": "^1.1.1",
+    "pureimage": "^0.4.18"
+  }
 }

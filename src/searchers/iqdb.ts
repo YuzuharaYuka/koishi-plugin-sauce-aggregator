@@ -1,3 +1,5 @@
+// --- START OF FILE iqdb.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Searcher, SearchOptions, IQDB as IQDBConfig, DebugConfig, SearchEngineName, Config } from '../config'
 import * as cheerio from 'cheerio'
@@ -55,8 +57,8 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
   public readonly name: SearchEngineName = 'iqdb';
   private timeout: number;
   
-  constructor(public ctx: Context, public config: IQDBConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
-      this.timeout = pluginConfig.requestTimeout * 1000;
+  constructor(public ctx: Context, public config: IQDBConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
+      this.timeout = requestTimeout * 1000;
   }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
@@ -159,3 +161,4 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
     }
   }
 }
+// --- END OF FILE iqdb.ts ---

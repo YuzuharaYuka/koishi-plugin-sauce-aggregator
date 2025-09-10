@@ -11,6 +11,5 @@ export declare class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config>
     enhance(result: Searcher.Result): Promise<EnhancedResult | null>;
     private findDanbooruUrl;
     private parsePostId;
-    private getImageType;
     private buildDetailNodes;
 }

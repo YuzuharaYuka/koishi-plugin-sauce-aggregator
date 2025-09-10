@@ -1,6 +1,9 @@
+// --- START OF FILE danbooru.ts ---
+
 import { Context, Logger, h } from 'koishi'
 import { Danbooru as DanbooruConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
+import { getImageTypeFromUrl } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
@@ -114,7 +117,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       }
 
       const details = this.buildDetailNodes(post);
-      const imageType = this.getImageType(post.file_url);
+      const imageType = getImageTypeFromUrl(post.file_url);
 
       return { details, imageBuffer, imageType };
       
@@ -141,14 +144,6 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
   private parsePostId(url: string): string | null {
     const match = url.match(/(\d+)/g);
     return match ? match[match.length - 1] : null;
-  }
-
-  private getImageType(url: string): string {
-    const ext = url.split('.').pop()?.toLowerCase();
-    if (ext === 'png') return 'image/png';
-    if (ext === 'gif') return 'image/gif';
-    if (ext === 'webp') return 'image/webp';
-    return 'image/jpeg';
   }
   
   private buildDetailNodes(post: DanbooruPost): h[] {
@@ -192,3 +187,4 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+// --- END OF FILE danbooru.ts ---

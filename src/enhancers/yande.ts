@@ -1,5 +1,8 @@
+// --- START OF FILE yande.ts ---
+
 import { Context, Logger, h } from 'koishi'
-import { YandeRe as YandeReConfig, Enhancer, EnhancedResult, Searcher, DebugConfig, Config } from '../config'
+import { YandeRe as YandeReConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
+import { getImageTypeFromUrl } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
@@ -26,8 +29,8 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
   public readonly name: 'yandere' = 'yandere';
   private timeout: number;
 
-  constructor(public ctx: Context, public config: YandeReConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
-      this.timeout = pluginConfig.requestTimeout * 1000;
+  constructor(public ctx: Context, public config: YandeReConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
+      this.timeout = requestTimeout * 1000;
   }
 
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -75,7 +78,7 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
       if (this.debugConfig.enabled) logger.info(`[yande.re] 正在下载图源图片 (${this.config.postQuality} 质量)... URL: ${downloadUrl}`)
 
       const imageBuffer = Buffer.from(await this.ctx.http.get(downloadUrl, { responseType: 'arraybuffer', timeout: this.timeout }))
-      const imageType = this.getImageType(downloadUrl)
+      const imageType = getImageTypeFromUrl(downloadUrl)
 
       return { details, imageBuffer, imageType }
     } catch (error) {
@@ -106,12 +109,6 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     return match ? match[1] : null
   }
   
-  private getImageType(url: string): string {
-      if (url.endsWith('.png')) return 'image/png';
-      if (url.endsWith('.gif')) return 'image/gif';
-      return 'image/jpeg';
-  }
-
   private buildDetailNodes(post: YandeRePost): h[] {
     const info: string[] = [];
     info.push(`Yande.re (ID: ${post.id})`);
@@ -140,3 +137,4 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+// --- END OF FILE yande.ts ---

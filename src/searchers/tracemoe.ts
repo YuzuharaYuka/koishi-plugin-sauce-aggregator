@@ -1,3 +1,5 @@
+// --- START OF FILE tracemoe.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Searcher, SearchOptions, TraceMoe as TraceMoeConfig, DebugConfig, SearchEngineName, Config } from '../config'
 const logger = new Logger('sauce-aggregator')
@@ -6,8 +8,8 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
   public readonly name: SearchEngineName = 'tracemoe';
   private timeout: number;
   
-  constructor(public ctx: Context, public config: TraceMoeConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
-      this.timeout = pluginConfig.requestTimeout * 1000;
+  constructor(public ctx: Context, public config: TraceMoeConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
+      this.timeout = requestTimeout * 1000;
   }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
@@ -101,3 +103,4 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
     }
   }
 }
+// --- END OF FILE tracemoe.ts ---

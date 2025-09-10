@@ -1,6 +1,8 @@
+// --- START OF FILE gelbooru.ts ---
+
 import { Context, Logger, h } from 'koishi'
-import { Gelbooru as GelbooruConfig, Enhancer, EnhancedResult, Searcher, DebugConfig, Config } from '../config'
-import { USER_AGENT } from '../utils'
+import { Gelbooru as GelbooruConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
+import { USER_AGENT, getImageTypeFromUrl } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
@@ -33,8 +35,8 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
   public readonly name: 'gelbooru' = 'gelbooru';
   private timeout: number;
   
-  constructor(public ctx: Context, public config: GelbooruConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
-      this.timeout = pluginConfig.requestTimeout * 1000;
+  constructor(public ctx: Context, public config: GelbooruConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
+      this.timeout = requestTimeout * 1000;
   }
 
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -117,7 +119,7 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
       if (this.debugConfig.enabled) logger.info(`[gelbooru] 正在下载图源图片 (${this.config.postQuality} 质量)... URL: ${downloadUrl}`);
 
       const imageBuffer = Buffer.from(await this.ctx.http.get(downloadUrl, { responseType: 'arraybuffer', timeout: this.timeout }));
-      const imageType = this.getImageType(downloadUrl);
+      const imageType = getImageTypeFromUrl(downloadUrl);
 
       return { details, imageBuffer, imageType };
     } catch (error) {
@@ -141,13 +143,6 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
   private parseParam(url: string, param: string): string | null {
     const match = url.match(new RegExp(`[?&]${param}=([^&]*)`));
     return match ? match[1] : null;
-  }
-
-  private getImageType(url: string): string {
-    const ext = url.split('.').pop()?.toLowerCase();
-    if (ext === 'png') return 'image/png';
-    if (ext === 'gif') return 'image/gif';
-    return 'image/jpeg';
   }
 
   private buildDetailNodes(post: GelbooruPost): h[] {
@@ -178,3 +173,4 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+// --- END OF FILE gelbooru.ts ---

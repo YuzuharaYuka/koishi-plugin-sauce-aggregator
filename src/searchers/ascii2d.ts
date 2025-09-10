@@ -1,9 +1,9 @@
+// --- START OF FILE src/searchers/ascii2d.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Searcher, SearchOptions, Ascii2D as Ascii2DConfig, DebugConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
-import { promises as fs } from 'fs';
-import path from 'path';
-import type { Page, ScreenshotOptions } from 'puppeteer-core';
+import type { Page } from 'puppeteer-core';
 
 const logger = new Logger('sauce-aggregator')
 
@@ -58,23 +58,7 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
     } catch(error) {
         logger.error('[ascii2d] [Stealth] 搜索过程中发生错误:', error);
         if (this.debugConfig.enabled) {
-            try {
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const logDir = path.resolve(this.ctx.baseDir, 'logs');
-                await fs.mkdir(logDir, { recursive: true });
-
-                const screenshotPath = path.resolve(logDir, `ascii2d-error-${timestamp}.png`);
-                const htmlPath = path.resolve(logDir, `ascii2d-error-${timestamp}.html`);
-                
-                await page.screenshot({ path: screenshotPath, fullPage: true } as ScreenshotOptions);
-                const htmlContent = await page.content();
-                await fs.writeFile(htmlPath, htmlContent);
-
-                logger.info(`[ascii2d] [Stealth] 已保存错误快照: ${screenshotPath}`);
-                logger.info(`[ascii2d] [Stealth] 已保存错误页面HTML: ${htmlPath}`);
-            } catch (snapshotError) {
-                logger.error('[ascii2d] [Stealth] 保存错误快照失败:', snapshotError);
-            }
+            await this.puppeteer.saveErrorSnapshot(page, this.name);
         }
         throw error;
     } finally {
@@ -84,7 +68,9 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
 
   private async parseResults(page: Page): Promise<Searcher.Result[]> {
     const rawResults = await page.$$eval('div.item-box', (boxes: HTMLDivElement[]) => {
-        return boxes.map(box => {
+        // *** THIS IS THE FIX ***
+        // The first item-box is the source image, so we skip it.
+        return boxes.slice(1).map(box => {
             if (box.querySelector('h5')?.textContent === '広告') return null;
 
             const thumbnailElement = box.querySelector('img');
@@ -92,6 +78,9 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
             if (!thumbnailElement || !detailBox) return null;
 
             const links = Array.from(detailBox.querySelectorAll('h6 a')) as HTMLAnchorElement[];
+            // If there are no links in the detail box, it's not a real result.
+            if (links.length === 0) return null;
+
             const sourceInfoElement = detailBox.querySelector('h6 small.text-muted');
             const sourceInfo = sourceInfoElement ? sourceInfoElement.textContent : '未知来源';
             
@@ -129,3 +118,4 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
     }));
   }
 }
+// --- END OF FILE src/searchers/ascii2d.ts ---

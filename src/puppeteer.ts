@@ -1,12 +1,13 @@
-// --- START OF FILE puppeteer.ts ---
-
+// --- START OF FILE src/puppeteer.ts ---
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
 import puppeteer from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import find from 'puppeteer-finder';
-import type { Browser, Page } from 'puppeteer-core';
+import type { Browser, Page, ScreenshotOptions } from 'puppeteer-core';
 import { USER_AGENT } from './utils'
+import { promises as fs } from 'fs';
+import path from 'path';
 
 const logger = new Logger('sauce-aggregator:puppeteer')
 puppeteer.use(StealthPlugin())
@@ -94,6 +95,26 @@ export class PuppeteerManager {
         return page;
     }
 
+    public async saveErrorSnapshot(page: Page, contextName: string): Promise<void> {
+        try {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const logDir = path.resolve(this.ctx.baseDir, 'logs');
+            await fs.mkdir(logDir, { recursive: true });
+
+            const screenshotPath = path.resolve(logDir, `${contextName}-error-${timestamp}.png`);
+            const htmlPath = path.resolve(logDir, `${contextName}-error-${timestamp}.html`);
+            
+            await page.screenshot({ path: screenshotPath, fullPage: true } as ScreenshotOptions);
+            const htmlContent = await page.content();
+            await fs.writeFile(htmlPath, htmlContent);
+
+            logger.info(`[Stealth] [${contextName}] 已保存错误快照: ${screenshotPath}`);
+            logger.info(`[Stealth] [${contextName}] 已保存错误页面HTML: ${htmlPath}`);
+        } catch (snapshotError) {
+            logger.error(`[Stealth] [${contextName}] 保存错误快照失败:`, snapshotError);
+        }
+    }
+
     public async dispose() {
         if (this._browserPromise) {
             try {
@@ -109,3 +130,4 @@ export class PuppeteerManager {
         }
     }
 }
+// --- END OF FILE src/puppeteer.ts ---

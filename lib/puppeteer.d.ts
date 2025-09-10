@@ -10,5 +10,6 @@ export declare class PuppeteerManager {
     private launchBrowser;
     private getBrowser;
     getPage(): Promise<Page>;
+    saveErrorSnapshot(page: Page, contextName: string): Promise<void>;
     dispose(): Promise<void>;
 }

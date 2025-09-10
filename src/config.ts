@@ -1,9 +1,8 @@
-// --- START OF FILE config.ts ---
-
+// --- START OF FILE src/config.ts ---
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
-export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d'
+export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot'
 export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru'
 
 export interface SearchOptions {
@@ -68,11 +67,12 @@ export interface Config {
   gelbooru: Gelbooru.Config
   danbooru: Danbooru.Config
   ascii2d: Ascii2D.Config
+  soutubot: SoutuBot.Config
 }
 
-export namespace SauceNAO { export interface Config { apiKeys: string[]; } }
-export namespace TraceMoe { export interface Config { sendVideoPreview: boolean; } }
-export namespace IQDB { export interface Config { } }
+export namespace SauceNAO { export interface Config { apiKeys: string[]; confidenceThreshold?: number; } }
+export namespace TraceMoe { export interface Config { sendVideoPreview: boolean; confidenceThreshold?: number; } }
+export namespace IQDB { export interface Config { confidenceThreshold?: number; } }
 
 export namespace Yandex { 
   export interface Config { 
@@ -110,10 +110,17 @@ export namespace Ascii2D {
     }
 }
 
+export namespace SoutuBot {
+    export interface Config { 
+      confidenceThreshold?: number;
+      maxHighConfidenceResults?: number;
+    }
+}
+
 export const Config: Schema<Config> = Schema.object({
 
   order: Schema.array(Schema.object({
-    engine: Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d']).description('搜图引擎'),
+    engine: Schema.union(['saucenao', 'iqdb', 'tracemoe', 'soutubot', 'yandex', 'ascii2d']).description('搜图引擎'),
     enabled: Schema.boolean().default(true).description('是否启用'),
   }))
     .role('table')
@@ -121,6 +128,7 @@ export const Config: Schema<Config> = Schema.object({
       { engine: 'saucenao', enabled: true },
       { engine: 'iqdb', enabled: true },
       { engine: 'tracemoe', enabled: true },
+      { engine: 'soutubot', enabled: true },
       { engine: 'ascii2d', enabled: true },
       { engine: 'yandex', enabled: true },
     ])
@@ -138,7 +146,7 @@ export const Config: Schema<Config> = Schema.object({
     ])
     .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按此顺序尝试获取更详细信息。'),
   
-  confidenceThreshold: Schema.number().default(85).min(0).max(100).description('高匹配度阈值 (%)。结果相似度高于此值时将直接返回，不再继续搜索。'),
+  confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值 (%)。当引擎未设置独立阈值时，将使用此值。'),
   maxResults: Schema.number().default(2).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
   promptTimeout: Schema.number().default(60).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
   requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源增强器。'),
@@ -149,14 +157,22 @@ export const Config: Schema<Config> = Schema.object({
 
   saucenao: Schema.object({
     apiKeys: Schema.array(Schema.string().role('secret')).description('SauceNAO 的 API Key 列表。\n\n注册登录 saucenao.com，在底部选项 \`Account\` -> \`api\` -> \`api key\`中生成。\n\n将api key: 后字符串完整复制并填入。'),
+    confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
   }).description('SauceNAO 设置'),
   
   tracemoe: Schema.object({
     sendVideoPreview: Schema.boolean().default(true).description('发送视频预览。当 Trace.moe 找到高匹配度结果时，是否发送预览视频。'),
+    confidenceThreshold: Schema.number().min(0).max(100).default(90).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
   }).description('Trace.moe 设置'),
 
   iqdb: Schema.object({
+    confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
   }).description('IQDB 设置'),
+  
+  soutubot: Schema.object({
+    confidenceThreshold: Schema.number().min(0).max(100).default(70).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+    maxHighConfidenceResults: Schema.number().min(1).max(10).default(3).description('高匹配度结果的最大显示数量。用于展示多个不同版本（如语言）的匹配结果。'),
+  }).description('搜图bot酱 设置'),
   
   yandex: Schema.object({
     alwaysAttach: Schema.boolean().default(false).description('总是附加 Yandex 结果。开启后，即使其他引擎找到高匹配度结果，也会附带 Yandex 的首个结果。'),
@@ -169,7 +185,7 @@ export const Config: Schema<Config> = Schema.object({
   ascii2d: Schema.object({
       alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带 Ascii2D 的首个结果。'),
   }).description('Ascii2D 设置'),
-
+  
   yandere: Schema.object({
     postQuality: Schema.union([
       Schema.const('original').description('原图'),
@@ -221,7 +237,7 @@ export const Config: Schema<Config> = Schema.object({
 
     debug: Schema.object({
       enabled: Schema.boolean().default(false).description('启用调试模式。将在控制台输出详细的执行日志。'),
-      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'gelbooru', 'yandere', 'danbooru']))
+      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru']))
         .role('checkbox')
         .default([])
         .description('记录 API 响应。选择要将 API 或页面原始返回信息输出到日志的引擎/图源 (可能产生大量日志)。'),

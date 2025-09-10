@@ -1,3 +1,5 @@
+// --- START OF FILE saucenao.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Searcher, SearchOptions, SauceNAO as SauceNAOConfig, DebugConfig, SearchEngineName, Config } from '../config'
 const logger = new Logger('sauce-aggregator')
@@ -12,8 +14,8 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
   private keyIndex = 0
   private timeout: number;
   
-  constructor(public ctx: Context, public config: SauceNAOConfig.Config, public debugConfig: DebugConfig, pluginConfig: Config) {
-      this.timeout = pluginConfig.requestTimeout * 1000;
+  constructor(public ctx: Context, public config: SauceNAOConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
+      this.timeout = requestTimeout * 1000;
   }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
@@ -123,3 +125,4 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
     }
   }
 }
+// --- END OF FILE saucenao.ts ---
