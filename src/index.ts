@@ -11,6 +11,7 @@ import { Buffer } from 'buffer'
 import { YandeReEnhancer } from './enhancers/yande'
 import { GelbooruEnhancer } from './enhancers/gelbooru'
 import { DanbooruEnhancer } from './enhancers/danbooru'
+import { PixivEnhancer } from './enhancers/pixiv'
 import { PuppeteerManager } from './puppeteer'
 import { SearchHandler } from './core/search-handler'
 import { getImageUrlAndName, preprocessImage, detectImageType } from './utils'
@@ -22,25 +23,35 @@ const logger = new Logger(name)
 export { Config }
 
 export const usage = `
-指令: sauce [引擎名] [图片]
-别名: 搜图, soutu
-选项: --all / -a (返回全部引擎搜索结果)
+###	指令用法
+#### sauce [引擎名] [图片]
+*	别名: \`搜图\`, \`soutu\`
+*	选项: \`--all\` / \`-a\` (返回全部引擎搜索结果)
+*	支持指令后跟图片/URL、回复图片、或发送指令后等待图片。
+	*	**顺序搜索**: \`sauce [图片]\` 按配置顺序搜索，找到高匹配度结果后停止。
+	*	**全量搜索**: \`sauce -a [图片]\` 搜索所有启用的引擎并返回全部结果。
+	*	**指定引擎搜索**: \`sauce <引擎名> [图片]\` 只使用指定引擎搜索。
 
-- **默认搜索**: \`sauce [图片]\` - 按配置顺序搜索，找到高匹配度结果后停止。
-- **全量搜索**: \`sauce --all [图片]\` - 搜索所有启用的引擎并报告全部结果。
-- **指定引擎搜索**: \`sauce <引擎名> [图片]\` - 只使用指定引擎搜索。
+---
 
-**可用引擎名 (及其别名)**:
-- \`saucenao\` (s) : 识别动漫、插画和本子图片等。
-- \`iqdb\` (i) : 从多个图源网站识别动漫、漫画、游戏图片和壁纸。
-- \`tracemoe\` (t) : 识别番剧截图，提供标题、集数、时间轴与视频预览。
-- \`soutubot\` (b) : 搜图bot酱，使用完整图或局部图识别nh和eh本子图片。
-- \`ascii2d\` (a) : 二次元画像詳細検索，作为补充结果。
-- \`yandex\` (y) : 识别网络媒体和网站中存在的相似图片并返回来源，主要作为其他引擎未找到高匹配度结果时的补充。
+#### 可用引擎 (及其别名):
+*	**[saucenao](https://saucenao.com/) (s)** : 识别动漫、插画和本子图片等。
+*	**[iqdb](https://www.iqdb.org/) (i)** : 从多个图源网站识别动漫、漫画、游戏图片和壁纸。
+*	**[tracemoe](https://trace.moe/) (t)** : 识别番剧截图，提供标题、集数、时间轴与视频预览。
+*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，使用完整图或局部图识别nh和eh本子图片。
+*	**[ascii2d](https://ascii2d.net/) (a)** : 二次元画像詳細検索，作为补充结果。
+*	**[yandex](https://ya.ru/) (y)** : 识别网络媒体和网站中存在的相似图片并返回来源，主要作为其他引擎未找到高匹配度结果时的补充。
+
+#### 可用图源
+*	**[yandere](https://yande.re/post)** : 动漫和游戏插画图站，高清壁纸和原画。
+*	**[gelbooru](https://gelbooru.com/index.php?page=post&s=list&tags=all)** : 综合性动漫图站，插画、漫画和同人作品。
+*	**[danbooru](https://danbooru.donmai.us/)** : 动漫艺术网站，标签详尽元数据丰富。
+*	**[pixiv](https://www.pixiv.net/)** : 艺术家原创插画、漫画分享社区。
+---
 
 ###	注意：
-####	部分引擎需要配置代理才可用, http相关报错请先检查代理设置。
-####	为绕过机器人脚本防护，yandex, ascii2d, danbooru, soutubot搜图使用浏览器实例实现，响应速度相对较慢。
+*	部分引擎可能需要配置代理才可用, **http** 相关报错请先检查代理网络设置。
+*	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
 `
 
 export function apply(ctx: Context, config: Config) {
@@ -79,16 +90,21 @@ export function apply(ctx: Context, config: Config) {
   const enhancerRegistry = {
     yandere: { constructor: YandeReEnhancer, needsKeys: false, keys: null, keyName: '', messageName: '图源' },
     gelbooru: { constructor: GelbooruEnhancer, needsKeys: true, keys: config.gelbooru.keyPairs, keyName: 'API Key', messageName: '图源' },
-    danbooru: { constructor: DanbooruEnhancer, needsKeys: true, keys: config.danbooru.keyPairs, keyName: '用户凭据', messageName: '图源', requiresPuppeteer: true }
+    danbooru: { constructor: DanbooruEnhancer, needsKeys: true, keys: config.danbooru.keyPairs, keyName: '用户凭据', messageName: '图源', requiresPuppeteer: true },
+    pixiv: { constructor: PixivEnhancer, needsKeys: true, keys: [config.pixiv.refreshToken], keyName: 'Refresh Token', messageName: '图源' },
   };
   
   for (const name in enhancerRegistry) {
       const entry = enhancerRegistry[name];
       const generalConfig = config[name];
-  
-      if (!entry.needsKeys || (Array.isArray(entry.keys) && entry.keys.length > 0)) {
+      
+      const areKeysProvided = entry.needsKeys
+          ? (Array.isArray(entry.keys) ? entry.keys.filter(Boolean).length > 0 : !!entry.keys)
+          : true;
+
+      if (areKeysProvided) {
           const constructorArgs: any[] = [ctx, generalConfig, config.debug];
-          if (name === 'yandere' || name === 'gelbooru') constructorArgs.push(config.requestTimeout);
+          if (name === 'yandere' || name === 'gelbooru' || name === 'pixiv') constructorArgs.push(config.requestTimeout);
           if (entry.requiresPuppeteer) constructorArgs.push(puppeteerManager);
           
           allEnhancers[name] = new entry.constructor(...constructorArgs);

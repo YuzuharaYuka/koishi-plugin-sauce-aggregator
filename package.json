@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-sauce-aggregator",
-  "description": "聚合搜图插件。目前支持saucenao, iqdb, trace.moe, ascii2d, yandex搜图; yande.re, gelbooru, danbooru图源。添加搜图bot酱支持。",
-  "version": "1.6.0",
+  "description": "聚合以图搜图插件。目前支持6个常用搜图引擎，4个图源返回高清原图。添加pixiv图源支持。",
+  "version": "1.6.3",
   "homepage": "https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator",
   "repository": {
     "type": "git",
@@ -19,17 +19,18 @@
     "plugin",
     "image",
     "search",
-    "sauce",
     "saucenao",
     "trace.moe",
     "iqdb",
+    "soutubot",
     "yandex",
     "yande.re",
     "gelbooru",
-    "danbooru"
+    "danbooru",
+    "pixiv"
   ],
   "peerDependencies": {
-    "koishi": "^4.18.7"
+    "koishi": "^4.18.0"
   },
   "dependencies": {
     "@puppeteer/browsers": "^2.10.0",

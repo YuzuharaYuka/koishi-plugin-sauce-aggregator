@@ -3,7 +3,7 @@ import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
 export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot'
-export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru'
+export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru' | 'pixiv'
 
 export interface SearchOptions {
   imageUrl: string;
@@ -68,6 +68,7 @@ export interface Config {
   danbooru: Danbooru.Config
   ascii2d: Ascii2D.Config
   soutubot: SoutuBot.Config
+  pixiv: Pixiv.Config
 }
 
 export namespace SauceNAO { export interface Config { apiKeys: string[]; confidenceThreshold?: number; } }
@@ -117,6 +118,16 @@ export namespace SoutuBot {
     }
 }
 
+export namespace Pixiv {
+  export interface Config {
+      refreshToken: string;
+      clientId: string;
+      clientSecret: string;
+      postQuality: 'original' | 'large' | 'medium';
+      allowR18: boolean;
+  }
+}
+
 export const Config: Schema<Config> = Schema.object({
 
   order: Schema.array(Schema.object({
@@ -135,7 +146,7 @@ export const Config: Schema<Config> = Schema.object({
     .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all）。\n注意：Yandex 和 Ascii2D 通常建议作为附加结果使用。'),
 
   enhancerOrder: Schema.array(Schema.object({
-    engine: Schema.union(['gelbooru', 'yandere', 'danbooru']).description('图源'),
+    engine: Schema.union(['gelbooru', 'yandere', 'danbooru', 'pixiv']).description('图源'),
     enabled: Schema.boolean().default(true).description('是否启用'),
   }))
     .role('table')
@@ -143,6 +154,7 @@ export const Config: Schema<Config> = Schema.object({
       { engine: 'yandere', enabled: true },
       { engine: 'gelbooru', enabled: true },
       { engine: 'danbooru', enabled: true },
+      { engine: 'pixiv', enabled: true },
     ])
     .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按此顺序尝试获取更详细信息。'),
   
@@ -161,7 +173,7 @@ export const Config: Schema<Config> = Schema.object({
   }).description('SauceNAO 设置'),
   
   tracemoe: Schema.object({
-    sendVideoPreview: Schema.boolean().default(true).description('发送视频预览。当 Trace.moe 找到高匹配度结果时，是否发送预览视频。'),
+    sendVideoPreview: Schema.boolean().default(true).description('发送视频预览。当\`Trace.moe\` 找到高匹配度结果时，是否发送预览视频。'),
     confidenceThreshold: Schema.number().min(0).max(100).default(90).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
   }).description('Trace.moe 设置'),
 
@@ -175,15 +187,15 @@ export const Config: Schema<Config> = Schema.object({
   }).description('搜图bot酱 设置'),
   
   yandex: Schema.object({
-    alwaysAttach: Schema.boolean().default(false).description('总是附加 Yandex 结果。开启后，即使其他引擎找到高匹配度结果，也会附带 Yandex 的首个结果。'),
+    alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Yandex\`的首个结果。'),
     domain: Schema.union([
       Schema.const('ya.ru').description('ya.ru (推荐)'),
       Schema.const('yandex.com').description('yandex.com'),
-    ]).default('ya.ru').description('选择用于搜索的 Yandex 域名。如果遇到访问问题或搜索无结果，可以尝试切换。'),
+    ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名。如果遇到访问问题或搜索无结果，可以尝试切换。'),
   }).description('Yandex 设置'),
 
   ascii2d: Schema.object({
-      alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带 Ascii2D 的首个结果。'),
+      alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Ascii2D\`的首个结果。'),
   }).description('Ascii2D 设置'),
   
   yandere: Schema.object({
@@ -191,7 +203,7 @@ export const Config: Schema<Config> = Schema.object({
       Schema.const('original').description('原图'),
       Schema.const('jpeg').description('中等图'),
       Schema.const('sample').description('预览图'),
-    ]).default('jpeg').description('图片质量。从 Yande.re 获取的图片尺寸。'),
+    ]).default('jpeg').description('图片质量。从\`Yande.re\`获取的图片尺寸。'),
     maxRating: Schema.union([
         Schema.const('s').description('安全'),
         Schema.const('q').description('可疑'),
@@ -208,7 +220,7 @@ export const Config: Schema<Config> = Schema.object({
         Schema.const('original').description('原图'),
         Schema.const('sample').description('预览图'),
         Schema.const('preview').description('缩略图'),
-    ]).default('sample').description('图片质量。从 Gelbooru 获取的图片尺寸。'),
+    ]).default('sample').description('图片质量。从\`Gelbooru\`获取的图片尺寸。'),
     maxRating: Schema.union([
         Schema.const('general').description('通用'),
         Schema.const('sensitive').description('敏感'),
@@ -226,7 +238,7 @@ export const Config: Schema<Config> = Schema.object({
             Schema.const('original').description('原图'),
             Schema.const('sample').description('预览图 (大尺寸)'),
             Schema.const('preview').description('缩略图 (小尺寸)'),
-        ]).default('sample').description('图片质量。从 Danbooru 获取的图片尺寸。'),
+        ]).default('sample').description('图片质量。从\`Danbooru\`获取的图片尺寸。'),
         maxRating: Schema.union([
             Schema.const('general').description('通用 (g)'),
             Schema.const('sensitive').description('敏感 (s)'),
@@ -235,9 +247,21 @@ export const Config: Schema<Config> = Schema.object({
         ]).default('general').description('允许的最高内容评级。'),
     }).description('Danbooru 图源设置'),
 
+    pixiv: Schema.object({
+        refreshToken: Schema.string().role('secret').description('Pixiv API Refresh Token. 用于 API 请求认证，是启用此图源的必需项。\n\n获取教程: https://www.nanoka.top/posts/e78ef86/'),
+        postQuality: Schema.union([
+            Schema.const('original').description('原图'),
+            Schema.const('large').description('大图'),
+            Schema.const('medium').description('中等图'),
+        ]).default('large').description('图片质量。从\`Pixiv\`获取的图片尺寸。'),
+        allowR18: Schema.boolean().default(false).description('是否允许发送 R-18/R-18G 内容。'),
+        clientId: Schema.string().role('secret').description('Pixiv API Client ID.').default('MOBrBDS8blbauoSck0ZfDbtuzpyT'),
+        clientSecret: Schema.string().role('secret').description('Pixiv API Client Secret.').default('lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj'),
+    }).description('Pixiv 图源设置'),
+
     debug: Schema.object({
       enabled: Schema.boolean().default(false).description('启用调试模式。将在控制台输出详细的执行日志。'),
-      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru']))
+      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru', 'pixiv']))
         .role('checkbox')
         .default([])
         .description('记录 API 响应。选择要将 API 或页面原始返回信息输出到日志的引擎/图源 (可能产生大量日志)。'),
@@ -247,3 +271,4 @@ export const Config: Schema<Config> = Schema.object({
         logApiResponses: [],
       }),
 })
+// --- END OF FILE src/config.ts ---

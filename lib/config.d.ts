@@ -1,7 +1,7 @@
 import { Schema, Context, h } from 'koishi';
 import { Buffer } from 'buffer';
 export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot';
-export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru';
+export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru' | 'pixiv';
 export interface SearchOptions {
     imageUrl: string;
     imageBuffer: Buffer;
@@ -70,6 +70,7 @@ export interface Config {
     danbooru: Danbooru.Config;
     ascii2d: Ascii2D.Config;
     soutubot: SoutuBot.Config;
+    pixiv: Pixiv.Config;
 }
 export declare namespace SauceNAO {
     interface Config {
@@ -129,6 +130,15 @@ export declare namespace SoutuBot {
     interface Config {
         confidenceThreshold?: number;
         maxHighConfidenceResults?: number;
+    }
+}
+export declare namespace Pixiv {
+    interface Config {
+        refreshToken: string;
+        clientId: string;
+        clientSecret: string;
+        postQuality: 'original' | 'large' | 'medium';
+        allowR18: boolean;
     }
 }
 export declare const Config: Schema<Config>;
