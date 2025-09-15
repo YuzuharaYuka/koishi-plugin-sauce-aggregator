@@ -1,0 +1,289 @@
+// --- START OF FILE src/config.ts ---
+import { Schema, Context, h } from 'koishi'
+import { Buffer } from 'buffer'
+
+export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot'
+export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru' | 'pixiv'
+
+export interface SearchOptions {
+  imageUrl: string;
+  imageBuffer: Buffer;
+  fileName: string;
+  maxResults: number;
+}
+
+export namespace Searcher {
+  export interface Result {
+    thumbnail: string
+    similarity: number
+    url: string
+    source?: string
+    author?: string
+    time?: string
+    details?: string[]
+    coverImage?: string
+    videoPreview?: ArrayBuffer
+  }
+}
+
+export interface EnhancedResult {
+  details: h[]
+  imageBuffer?: Buffer
+  imageType?: string
+}
+
+export interface DebugConfig {
+  enabled: boolean
+  logApiResponses: (SearchEngineName | EnhancerName)[]
+}
+
+export interface PuppeteerConfig {
+  persistentBrowser: boolean
+  browserCloseTimeout: number
+  browserLaunchTimeout: number
+  chromeExecutablePath: string
+}
+
+export abstract class Enhancer<T = any> {
+  abstract name: EnhancerName
+  constructor(public ctx: Context, public config: T, public debugConfig: DebugConfig) {}
+  abstract enhance(result: Searcher.Result): Promise<EnhancedResult | null>;
+}
+
+
+export abstract class Searcher<T = any> {
+  abstract name: SearchEngineName
+  constructor(public ctx: Context, public config: T, public debugConfig: DebugConfig) {}
+  abstract search(options: SearchOptions): Promise<Searcher.Result[]>
+}
+
+export interface Config {
+  order: { engine: SearchEngineName; enabled: boolean }[]
+  enhancerOrder: { engine: EnhancerName; enabled: boolean }[]
+  confidenceThreshold: number
+  maxResults: number
+  promptTimeout: number
+  requestTimeout: number
+  puppeteer: PuppeteerConfig
+  debug: DebugConfig
+  saucenao: SauceNAO.Config
+  tracemoe: TraceMoe.Config
+  iqdb: IQDB.Config
+  yandex: Yandex.Config
+  yandere: YandeRe.Config
+  gelbooru: Gelbooru.Config
+  danbooru: Danbooru.Config
+  ascii2d: Ascii2D.Config
+  soutubot: SoutuBot.Config
+  pixiv: Pixiv.Config
+}
+
+export namespace SauceNAO { export interface Config { apiKeys: string[]; confidenceThreshold?: number; } }
+export namespace TraceMoe { export interface Config { sendVideoPreview: boolean; confidenceThreshold?: number; } }
+export namespace IQDB { export interface Config { confidenceThreshold?: number; } }
+
+export namespace Yandex { 
+  export interface Config { 
+    alwaysAttach: boolean;
+    domain: 'ya.ru' | 'yandex.com';
+  } 
+}
+
+export namespace YandeRe {
+  export interface Config {
+    postQuality: 'jpeg' | 'sample' | 'original'
+    maxRating: 's' | 'q' | 'e'
+  }
+}
+
+export namespace Gelbooru {
+    export interface Config {
+        keyPairs: { userId: string; apiKey: string }[]
+        postQuality: 'original' | 'sample' | 'preview'
+        maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'
+    }
+}
+
+export namespace Danbooru {
+    export interface Config {
+        keyPairs: { username: string; apiKey: string }[]
+        postQuality: 'original' | 'sample' | 'preview'
+        maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'
+    }
+}
+
+export namespace Ascii2D {
+    export interface Config {
+        alwaysAttach: boolean,
+    }
+}
+
+export namespace SoutuBot {
+    export interface Config { 
+      confidenceThreshold?: number;
+      maxHighConfidenceResults?: number;
+    }
+}
+
+export namespace Pixiv {
+  export interface Config {
+      refreshToken: string;
+      clientId: string;
+      clientSecret: string;
+      postQuality: 'original' | 'large' | 'medium';
+      allowR18: boolean;
+  }
+}
+
+// --- THIS IS THE FIX ---: Use a single Schema.object for all puppeteer settings
+const puppeteerConfig = Schema.object({
+    persistentBrowser: Schema.boolean().default(true).description('**常驻浏览器实例**<br>开启后，浏览器将在插件启动时预加载并常驻后台，响应速度最快，但会持续占用资源。关闭后，浏览器将按需启动，并在空闲后自动关闭以节省资源。'),
+    browserCloseTimeout: Schema.number().default(30).min(0).description('**自动关闭延迟 (秒)**<br>仅在 **关闭** `常驻浏览器实例` 时生效。设置最后一次搜索任务结束后，等待多少秒关闭浏览器实例。'),
+    browserLaunchTimeout: Schema.number().default(90).min(10).description('**浏览器启动超时 (秒)**<br>等待浏览器进程启动并准备就绪的最长时间。'),
+    chromeExecutablePath: Schema.string().description(
+      '**本地浏览器可执行文件路径 (可选)**<br>' +
+      '插件会优先使用此路径。如果留空，将尝试自动检测。'
+    ),
+})
+
+export const Config: Schema<Config> = Schema.object({
+  order: Schema.array(Schema.object({
+    engine: Schema.union(['saucenao', 'iqdb', 'tracemoe', 'soutubot', 'yandex', 'ascii2d']).description('搜图引擎'),
+    enabled: Schema.boolean().default(true).description('是否启用'),
+  }))
+    .role('table')
+    .default([
+      { engine: 'saucenao', enabled: true },
+      { engine: 'iqdb', enabled: true },
+      { engine: 'tracemoe', enabled: true },
+      { engine: 'soutubot', enabled: true },
+      { engine: 'ascii2d', enabled: true },
+      { engine: 'yandex', enabled: true },
+    ])
+    .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all）。\n注意：Yandex 和 Ascii2D 通常建议作为附加结果使用。'),
+
+  enhancerOrder: Schema.array(Schema.object({
+    engine: Schema.union(['gelbooru', 'yandere', 'danbooru', 'pixiv']).description('图源'),
+    enabled: Schema.boolean().default(true).description('是否启用'),
+  }))
+    .role('table')
+    .default([
+      { engine: 'yandere', enabled: true },
+      { engine: 'gelbooru', enabled: true },
+      { engine: 'danbooru', enabled: true },
+      { engine: 'pixiv', enabled: true },
+    ])
+    .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按此顺序尝试获取更详细信息。'),
+  
+  confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值 (%)。当引擎未设置独立阈值时，将使用此值。'),
+  maxResults: Schema.number().default(2).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
+  promptTimeout: Schema.number().default(60).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
+  requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源增强器。'),
+  
+  puppeteer: puppeteerConfig.description('浏览器设置 (适用于 Yandex, Ascii2D, SoutuBot, Danbooru)'),
+
+  saucenao: Schema.object({
+    apiKeys: Schema.array(Schema.string().role('secret')).description('SauceNAO 的 API Key 列表。\n\n注册登录 saucenao.com，在底部选项 \`Account\` -> \`api\` -> \`api key\`中生成。\n\n将api key: 后字符串完整复制并填入。'),
+    confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+  }).description('SauceNAO 设置'),
+  
+  tracemoe: Schema.object({
+    sendVideoPreview: Schema.boolean().default(true).description('发送视频预览。当\`Trace.moe\` 找到高匹配度结果时，是否发送预览视频。'),
+    confidenceThreshold: Schema.number().min(0).max(100).default(90).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+  }).description('Trace.moe 设置'),
+
+  iqdb: Schema.object({
+    confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+  }).description('IQDB 设置'),
+  
+  soutubot: Schema.object({
+    confidenceThreshold: Schema.number().min(0).max(100).default(70).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+    maxHighConfidenceResults: Schema.number().min(1).max(10).default(3).description('高匹配度结果的最大显示数量。用于展示多个不同版本（如语言）的匹配结果。'),
+  }).description('搜图bot酱 设置'),
+  
+  yandex: Schema.object({
+    alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Yandex\`的首个结果。'),
+    domain: Schema.union([
+      Schema.const('ya.ru').description('ya.ru (推荐)'),
+      Schema.const('yandex.com').description('yandex.com'),
+    ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名。如果遇到访问问题或搜索无结果，可以尝试切换。'),
+  }).description('Yandex 设置'),
+
+  ascii2d: Schema.object({
+      alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Ascii2D\`的首个结果。'),
+  }).description('Ascii2D 设置'),
+  
+  yandere: Schema.object({
+    postQuality: Schema.union([
+      Schema.const('original').description('原图'),
+      Schema.const('jpeg').description('中等图'),
+      Schema.const('sample').description('预览图'),
+    ]).default('jpeg').description('图片质量。从\`Yande.re\`获取的图片尺寸。'),
+    maxRating: Schema.union([
+        Schema.const('s').description('安全'),
+        Schema.const('q').description('可疑'),
+        Schema.const('e').description('露骨'),
+    ]).default('s').description('允许的最高内容评级。'),
+  }).description('Yande.re 图源设置'),
+  
+  gelbooru: Schema.object({
+    keyPairs: Schema.array(Schema.object({
+        userId: Schema.string().description('User ID').required(),
+        apiKey: Schema.string().role('secret').description('API Key').required(),
+    })).description('Gelbooru API Key 对 (User ID 与 Key)。\n\n注册登录 gelbooru.com，在 \`My Account\` -> \`Options\` 底部选项卡\``API Access Credentials\``中生成。\n\n形如\`&api_key={ API Key }&user_id={ User ID }\` { }中的才是需要填入的。'),
+    postQuality: Schema.union([
+        Schema.const('original').description('原图'),
+        Schema.const('sample').description('预览图'),
+        Schema.const('preview').description('缩略图'),
+    ]).default('sample').description('图片质量。从\`Gelbooru\`获取的图片尺寸。'),
+    maxRating: Schema.union([
+        Schema.const('general').description('通用'),
+        Schema.const('sensitive').description('敏感'),
+        Schema.const('questionable').description('可疑'),
+        Schema.const('explicit').description('露骨'),
+    ]).default('general').description('允许的最高内容评级。'),
+    }).description('Gelbooru 图源设置'),
+
+    danbooru: Schema.object({
+        keyPairs: Schema.array(Schema.object({
+            username: Schema.string().description('用户名 (Login Name)').required(),
+            apiKey: Schema.string().role('secret').description('API Key').required(),
+        })).description('Danbooru API 用户凭据 (用户名与 API Key)。\n\n注册登录 danbooru.donmai.us，在 \`My Account\` -> \`Profile\` 底部 \`API Key\` 处生成。'),
+        postQuality: Schema.union([
+            Schema.const('original').description('原图'),
+            Schema.const('sample').description('预览图 (大尺寸)'),
+            Schema.const('preview').description('缩略图 (小尺寸)'),
+        ]).default('sample').description('图片质量。从\`Danbooru\`获取的图片尺寸。'),
+        maxRating: Schema.union([
+            Schema.const('general').description('通用 (g)'),
+            Schema.const('sensitive').description('敏感 (s)'),
+            Schema.const('questionable').description('可疑 (q)'),
+            Schema.const('explicit').description('露骨 (e)'),
+        ]).default('general').description('允许的最高内容评级。'),
+    }).description('Danbooru 图源设置'),
+
+    pixiv: Schema.object({
+        refreshToken: Schema.string().role('secret').description('Pixiv API Refresh Token. 用于 API 请求认证，是启用此图源的必需项。\n\n获取教程: https://www.nanoka.top/posts/e78ef86/'),
+        postQuality: Schema.union([
+            Schema.const('original').description('原图'),
+            Schema.const('large').description('大图'),
+            Schema.const('medium').description('中等图'),
+        ]).default('large').description('图片质量。从\`Pixiv\`获取的图片尺寸。'),
+        allowR18: Schema.boolean().default(false).description('是否允许发送 R-18/R-18G 内容。'),
+        clientId: Schema.string().role('secret').description('Pixiv API Client ID.').default('MOBrBDS8blbauoSck0ZfDbtuzpyT'),
+        clientSecret: Schema.string().role('secret').description('Pixiv API Client Secret.').default('lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj'),
+    }).description('Pixiv 图源设置'),
+
+    debug: Schema.object({
+      enabled: Schema.boolean().default(false).description('启用调试模式。将在控制台输出详细的执行日志。'),
+      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru', 'pixiv']))
+        .role('checkbox')
+        .default([])
+        .description('记录 API 响应。选择要将 API 或页面原始返回信息输出到日志的引擎/图源 (可能产生大量日志)。'),
+    }).description('调试设置')
+      .default({
+        enabled: false,
+        logApiResponses: [],
+      }),
+})
+// --- END OF FILE src/config.ts ---
