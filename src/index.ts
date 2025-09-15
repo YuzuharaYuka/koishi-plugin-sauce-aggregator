@@ -52,10 +52,25 @@ export const usage = `
 ###	注意：
 *	部分引擎可能需要配置代理才可用, **http** 相关报错请先检查代理网络设置。
 *	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
+*	\`saucenao\` 引擎, \`gelbooru\` , \`danbooru\` , \`pixiv\` 图源需要配置 API Key 或 Token 才可用。 
+*	\`yandex\` , \`ascii2d\` ,  \`soutubot\` 引擎, \`danbooru\` 图源需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
 `
 
 export function apply(ctx: Context, config: Config) {
   const puppeteerManager = new PuppeteerManager(ctx, config);
+
+  ctx.on('ready', async () => {
+    if (config.puppeteer.persistentBrowser) {
+        const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
+        const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
+        const needsPuppeteerForEnhance = config.enhancerOrder.some(e => e.enabled && e.engine === 'danbooru');
+        
+        if (needsPuppeteerForSearch || needsPuppeteerForEnhance) {
+            await puppeteerManager.initialize();
+        }
+    }
+  });
+
   ctx.on('dispose', () => puppeteerManager.dispose());
   
   const allSearchers: Record<string, Searcher> = {};
@@ -178,10 +193,12 @@ export function apply(ctx: Context, config: Config) {
             if (!nextMessageContent) return '已取消。';
             
             const unescapedContent = h.unescape(nextMessageContent);
-            imgData = getImageUrlAndName({ content: unescapedContent, quote: session.quote, elements: h.parse(unescapedContent) }, unescapedContent);
+            const messageSession = { content: unescapedContent, elements: h.parse(unescapedContent) };
+            imgData = getImageUrlAndName(messageSession, unescapedContent);
             
             if (!imgData.url) return '未找到图片，已取消。';
           } catch (e) {
+            if (config.debug.enabled) logger.warn('等待用户图片时出错:', e);
             return '等待超时，已取消。';
           }
         }

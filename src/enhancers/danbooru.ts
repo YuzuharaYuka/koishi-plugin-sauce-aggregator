@@ -1,5 +1,4 @@
-// --- START OF FILE danbooru.ts ---
-
+// --- START OF FILE src/enhancers/danbooru.ts ---
 import { Context, Logger, h } from 'koishi'
 import { Danbooru as DanbooruConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
@@ -60,12 +59,10 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       const apiBaseUrl = `https://danbooru.donmai.us/posts/${postId}.json`;
       const apiUrl = `${apiBaseUrl}?login=${keyPair.username}&api_key=${keyPair.apiKey}`;
 
-      if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在通过 fetch 获取 API: ${apiBaseUrl}`);
+      if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在通过页面内 fetch 获取 API: ${apiBaseUrl}`);
       
-      // Navigate to a neutral page first to establish a legitimate context
-      await page.goto('https://danbooru.donmai.us/posts');
+      await page.goto('https://danbooru.donmai.us/posts', { waitUntil: 'domcontentloaded' });
       
-      // Execute fetch from the page's context to avoid direct navigation to a JSON file
       const jsonContent = await page.evaluate(url => 
         fetch(url).then(res => {
           if (!res.ok) throw new Error(`API Request failed with status ${res.status}`);
@@ -91,18 +88,33 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       }
 
       if (downloadUrl) {
-        if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在下载图源图片: ${downloadUrl}`);
+        if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
         
-        await page.setExtraHTTPHeaders({
-          'Referer': `https://danbooru.donmai.us/posts/${postId}`
-        });
-        
-        const imageResponse = await page.goto(downloadUrl);
-        if (!imageResponse.ok()) {
-          throw new Error(`Image download failed with status ${imageResponse.status()}`);
+        // --- THIS IS THE FIX ---
+        // Use page.evaluate to fetch the image and return it as a Base64 string.
+        // This avoids Puppeteer's internal buffer limitations for large files.
+        const imageBase64 = await page.evaluate(async (url) => {
+          const response = await fetch(url, { mode: 'cors' }); // Add mode: 'cors' for safety
+          if (!response.ok) {
+            throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+          }
+          const buffer = await response.arrayBuffer();
+          // A robust way to convert ArrayBuffer to Base64
+          let binary = '';
+          const bytes = new Uint8Array(buffer);
+          const len = bytes.byteLength;
+          for (let i = 0; i < len; i++) {
+              binary += String.fromCharCode(bytes[i]);
+          }
+          return btoa(binary);
+        }, downloadUrl);
+
+        if (!imageBase64) {
+          throw new Error('Failed to download image or convert to Base64 in browser context.');
         }
-        imageBuffer = await imageResponse.buffer();
-        if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 图片下载成功，大小: ${imageBuffer.length} 字节。`);
+        
+        imageBuffer = Buffer.from(imageBase64, 'base64');
+        if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
       }
       
       const ratingMap = { g: 'general', s: 'sensitive', q: 'questionable', e: 'explicit' };
@@ -123,6 +135,9 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       
     } catch (error) {
       logger.error(`[danbooru] [Stealth] 处理过程中发生错误 (ID: ${postId}):`, error);
+      if (this.debugConfig.enabled) {
+          await this.puppeteer.saveErrorSnapshot(page, this.name);
+      }
       throw error;
     } finally {
       if (page && !page.isClosed()) await page.close();
@@ -187,4 +202,4 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE danbooru.ts ---
+// --- END OF FILE src/enhancers/danbooru.ts ---

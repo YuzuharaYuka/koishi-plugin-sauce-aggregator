@@ -37,6 +37,13 @@ export interface DebugConfig {
   logApiResponses: (SearchEngineName | EnhancerName)[]
 }
 
+export interface PuppeteerConfig {
+  persistentBrowser: boolean
+  browserCloseTimeout: number
+  browserLaunchTimeout: number
+  chromeExecutablePath: string
+}
+
 export abstract class Enhancer<T = any> {
   abstract name: EnhancerName
   constructor(public ctx: Context, public config: T, public debugConfig: DebugConfig) {}
@@ -57,7 +64,7 @@ export interface Config {
   maxResults: number
   promptTimeout: number
   requestTimeout: number
-  chromeExecutablePath: string
+  puppeteer: PuppeteerConfig
   debug: DebugConfig
   saucenao: SauceNAO.Config
   tracemoe: TraceMoe.Config
@@ -128,8 +135,18 @@ export namespace Pixiv {
   }
 }
 
-export const Config: Schema<Config> = Schema.object({
+// --- THIS IS THE FIX ---: Use a single Schema.object for all puppeteer settings
+const puppeteerConfig = Schema.object({
+    persistentBrowser: Schema.boolean().default(true).description('**常驻浏览器实例**<br>开启后，浏览器将在插件启动时预加载并常驻后台，响应速度最快，但会持续占用资源。关闭后，浏览器将按需启动，并在空闲后自动关闭以节省资源。'),
+    browserCloseTimeout: Schema.number().default(30).min(0).description('**自动关闭延迟 (秒)**<br>仅在 **关闭** `常驻浏览器实例` 时生效。设置最后一次搜索任务结束后，等待多少秒关闭浏览器实例。'),
+    browserLaunchTimeout: Schema.number().default(90).min(10).description('**浏览器启动超时 (秒)**<br>等待浏览器进程启动并准备就绪的最长时间。'),
+    chromeExecutablePath: Schema.string().description(
+      '**本地浏览器可执行文件路径 (可选)**<br>' +
+      '插件会优先使用此路径。如果留空，将尝试自动检测。'
+    ),
+})
 
+export const Config: Schema<Config> = Schema.object({
   order: Schema.array(Schema.object({
     engine: Schema.union(['saucenao', 'iqdb', 'tracemoe', 'soutubot', 'yandex', 'ascii2d']).description('搜图引擎'),
     enabled: Schema.boolean().default(true).description('是否启用'),
@@ -162,10 +179,8 @@ export const Config: Schema<Config> = Schema.object({
   maxResults: Schema.number().default(2).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
   promptTimeout: Schema.number().default(60).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
   requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源增强器。'),
-  chromeExecutablePath: Schema.string().description(
-    '本地浏览器可执行文件路径 (可选)。\n\n' +
-    '插件会优先使用此路径。如果留空，将尝试自动检测。'
-  ),
+  
+  puppeteer: puppeteerConfig.description('浏览器设置 (适用于 Yandex, Ascii2D, SoutuBot, Danbooru)'),
 
   saucenao: Schema.object({
     apiKeys: Schema.array(Schema.string().role('secret')).description('SauceNAO 的 API Key 列表。\n\n注册登录 saucenao.com，在底部选项 \`Account\` -> \`api\` -> \`api key\`中生成。\n\n将api key: 后字符串完整复制并填入。'),

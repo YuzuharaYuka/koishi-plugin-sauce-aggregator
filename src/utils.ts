@@ -71,19 +71,29 @@ export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<
 }
 
 export function getImageUrlAndName(session: any, text: string): { url: string; name: string } {
-    let elements = session.elements;
-    if (session.quote) elements = session.quote.elements;
-    
-    const imgElement = elements?.find(e => e.type === 'img');
-    let url: string;
+    // *** THIS IS THE FIX ***
+    // Revised logic for clarity and correctness.
+    // Priority 1: Image element in the current message's elements.
+    let imgElement = session.elements?.find(e => e.type === 'img');
 
-    if (imgElement?.attrs.src) url = imgElement.attrs.src;
+    // Priority 2: Image element in the quoted message's elements.
+    if (!imgElement && session.quote) {
+        imgElement = session.quote.elements?.find(e => e.type === 'img');
+    }
     
+    let url: string;
+    if (imgElement?.attrs.src) {
+        url = imgElement.attrs.src;
+    }
+    
+    // Priority 3: A valid URL found in the text content.
     if (!url && text) {
         try {
             const potentialUrl = text.trim();
             new URL(potentialUrl);
-            if (potentialUrl.startsWith('http')) url = potentialUrl;
+            if (potentialUrl.startsWith('http')) {
+                url = potentialUrl;
+            }
         } catch (_) {}
     }
     
@@ -92,8 +102,8 @@ export function getImageUrlAndName(session: any, text: string): { url: string; n
     const rawName = (imgElement?.attrs.file || url.split('/').pop().split('?')[0]) || 'image.jpg';
     const name = rawName.replace(/[\r\n"']+/g, '');
 
-    if (session.app.config.debug) {
-      logger.info(`[Debug] Parsed image URL from elements: ${url}`);
+    if (session.app?.config.debug) {
+      logger.info(`[Debug] Parsed image URL: ${url}`);
     }
     return { url, name };
 }

@@ -30,6 +30,12 @@ export interface DebugConfig {
     enabled: boolean;
     logApiResponses: (SearchEngineName | EnhancerName)[];
 }
+export interface PuppeteerConfig {
+    persistentBrowser: boolean;
+    browserCloseTimeout: number;
+    browserLaunchTimeout: number;
+    chromeExecutablePath: string;
+}
 export declare abstract class Enhancer<T = any> {
     ctx: Context;
     config: T;
@@ -59,7 +65,7 @@ export interface Config {
     maxResults: number;
     promptTimeout: number;
     requestTimeout: number;
-    chromeExecutablePath: string;
+    puppeteer: PuppeteerConfig;
     debug: DebugConfig;
     saucenao: SauceNAO.Config;
     tracemoe: TraceMoe.Config;
