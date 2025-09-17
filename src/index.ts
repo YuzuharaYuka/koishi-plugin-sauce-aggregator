@@ -181,7 +181,7 @@ export function apply(ctx: Context, config: Config) {
         if (isSingleEngineSpecified) {
             if (searchersToUse.length === 0) return '指定的搜图引擎无效或未正确配置。';
         } else {
-            if (allEnabledSearchers.length === 0) return '沒有啟用或指定任何有效的搜图引擎。';
+            if (allEnabledSearchers.length === 0) return '沒有启用或指定任何有效的搜图引擎。';
         }
 
         let imgData = getImageUrlAndName(session, imageInput);
