@@ -6,7 +6,7 @@
 
 ## 功能
 
-- **多引擎支持**: 集成 [SauceNao](https://saucenao.com/), [IQDB](https://www.iqdb.org/), [Trace.moe](https://trace.moe/), [搜图bot酱](https://soutubot.moe/), [Ascii2D](https://ascii2d.net/), [Yandex](https://ya.ru/)` 等搜图引擎。
+- **多引擎支持**: 集成 [SauceNao](https://saucenao.com/), [IQDB](https://www.iqdb.org/), [Trace.moe](https://trace.moe/), [搜图bot酱](https://soutubot.moe/), [Ascii2D](https://ascii2d.net/), [Yandex](https://ya.ru/) 等搜图引擎。
 - **图源详情增强**: 为高匹配度结果从 [Yande.re](https://yande.re/post), [Gelbooru](https://gelbooru.com/index.php?page=post&s=list&tags=all), [Danbooru](https://danbooru.donmai.us/), [Pixiv](https://www.pixiv.net/) 获取高清图源及作品标签等详细信息。
 - **可配置搜索策略**:
   - **串行模式**: 逐个调用引擎，找到高匹配度结果后立即停止，资源占用稳定。
