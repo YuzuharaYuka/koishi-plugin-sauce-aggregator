@@ -245,5 +245,5 @@ export function apply(ctx: Context, config: Config) {
           return '图片处理失败，请检查链接或网络。';
         }
     });
-}
+} 
 // --- END OF FILE src/index.ts ---
