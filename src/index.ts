@@ -28,8 +28,8 @@ export const usage = `
 *	别名: \`搜图\`, \`soutu\`
 *	选项: \`--all\` / \`-a\` (返回全部引擎搜索结果)
 *	支持指令后跟图片/URL、回复图片、或发送指令后等待图片。
-	*	**顺序搜索**: \`sauce [图片]\` 按配置顺序搜索，找到高匹配度结果后停止。
-	*	**全量搜索**: \`sauce -a [图片]\` 搜索所有启用的引擎并返回全部结果。
+	*	**默认搜索**: \`sauce [图片]\` 按配置的 **搜索模式(串行/并行)** 进行搜索。
+	*	**全量搜索**: \`sauce -a [图片]\` 强制搜索所有启用的引擎并返回全部结果。
 	*	**指定引擎搜索**: \`sauce <引擎名> [图片]\` 只使用指定引擎搜索。
 
 ---
@@ -61,6 +61,7 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.on('ready', async () => {
     if (config.puppeteer.persistentBrowser) {
+        // --- THIS IS THE FIX (1/2) ---: 'iqdb' is removed from this list.
         const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
         const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
         const needsPuppeteerForEnhance = config.enhancerOrder.some(e => e.enabled && e.engine === 'danbooru');
@@ -82,6 +83,7 @@ export function apply(ctx: Context, config: Config) {
   }
 
   allSearchers.tracemoe = new TraceMoe(ctx, config.tracemoe, config.debug, config.requestTimeout);
+  // --- THIS IS THE FIX (2/2) ---: The 4th argument is now config.requestTimeout (a number).
   allSearchers.iqdb = new IQDB(ctx, config.iqdb, config.debug, config.requestTimeout);
   allSearchers.yandex = new Yandex(ctx, config.yandex, config.debug, puppeteerManager);
   allSearchers.ascii2d = new Ascii2D(ctx, config.ascii2d, config.debug, puppeteerManager);
@@ -150,7 +152,7 @@ export function apply(ctx: Context, config: Config) {
             const text = inputText || '';
             const words = text.split(/\s+/).filter(Boolean);
       
-            let searchersToUse: Searcher[] = sequentialSearchers;
+            let searchersToUse: Searcher[] = allEnabledSearchers; // Default to all enabled for simplicity
             let imageInput: string = text;
             let isSingleEngineSpecified = false;
       
@@ -170,8 +172,6 @@ export function apply(ctx: Context, config: Config) {
                     imageInput = words.slice(1).join(' ');
                     isSingleEngineSpecified = true;
                 }
-            } else if (options.all) {
-                searchersToUse = allEnabledSearchers;
             }
             return { searchersToUse, imageInput, isSingleEngineSpecified };
         }
@@ -231,7 +231,13 @@ export function apply(ctx: Context, config: Config) {
           if (isSingleEngineSpecified || options.all) {
               return await searchHandler.handleDirectSearch(searchersToUse, searchOptions, botUser, session, collectedErrors);
           } else {
-              return await searchHandler.handleSequentialSearch(searchersToUse, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+              if (config.search.mode === 'parallel') {
+                  return await searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+              } else {
+                  const sequentialSearchers = allEnabledSearchers
+                    .filter(searcher => searcher.name !== 'yandex' && searcher.name !== 'ascii2d');
+                  return await searchHandler.handleSequentialSearch(sequentialSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+              }
           }
   
         } catch (error) {

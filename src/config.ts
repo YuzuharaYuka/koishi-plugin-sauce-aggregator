@@ -1,4 +1,5 @@
 // --- START OF FILE src/config.ts ---
+
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
@@ -44,6 +45,11 @@ export interface PuppeteerConfig {
   chromeExecutablePath: string
 }
 
+export interface SearchConfig {
+    mode: 'sequential' | 'parallel';
+    parallelHighConfidenceStrategy: 'first' | 'all';
+}
+
 export abstract class Enhancer<T = any> {
   abstract name: EnhancerName
   constructor(public ctx: Context, public config: T, public debugConfig: DebugConfig) {}
@@ -64,6 +70,7 @@ export interface Config {
   maxResults: number
   promptTimeout: number
   requestTimeout: number
+  search: SearchConfig 
   puppeteer: PuppeteerConfig
   debug: DebugConfig
   saucenao: SauceNAO.Config
@@ -135,7 +142,6 @@ export namespace Pixiv {
   }
 }
 
-// --- THIS IS THE FIX ---: Use a single Schema.object for all puppeteer settings
 const puppeteerConfig = Schema.object({
     persistentBrowser: Schema.boolean().default(true).description('**常驻浏览器实例**<br>开启后，浏览器将在插件启动时预加载并常驻后台，响应速度最快，但会持续占用资源。关闭后，浏览器将按需启动，并在空闲后自动关闭以节省资源。'),
     browserCloseTimeout: Schema.number().default(30).min(0).description('**自动关闭延迟 (秒)**<br>仅在 **关闭** `常驻浏览器实例` 时生效。设置最后一次搜索任务结束后，等待多少秒关闭浏览器实例。'),
@@ -160,7 +166,7 @@ export const Config: Schema<Config> = Schema.object({
       { engine: 'ascii2d', enabled: true },
       { engine: 'yandex', enabled: true },
     ])
-    .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all）。\n注意：Yandex 和 Ascii2D 通常建议作为附加结果使用。'),
+    .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all）。\nYandex 和 Ascii2D 建议作为附加结果使用。'),
 
   enhancerOrder: Schema.array(Schema.object({
     engine: Schema.union(['gelbooru', 'yandere', 'danbooru', 'pixiv']).description('图源'),
@@ -173,14 +179,31 @@ export const Config: Schema<Config> = Schema.object({
       { engine: 'danbooru', enabled: true },
       { engine: 'pixiv', enabled: true },
     ])
-    .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按此顺序尝试获取更详细信息。'),
+    .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按顺序尝试获取更详细信息。'),
   
   confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值 (%)。当引擎未设置独立阈值时，将使用此值。'),
   maxResults: Schema.number().default(2).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
   promptTimeout: Schema.number().default(60).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
-  requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源增强器。'),
+  requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源。'),
   
-  puppeteer: puppeteerConfig.description('浏览器设置 (适用于 Yandex, Ascii2D, SoutuBot, Danbooru)'),
+  search: Schema.object({
+    mode: Schema.union([
+        Schema.const('sequential').description('串行模式'),
+        Schema.const('parallel').description('并行模式'),
+    ]).default('sequential').description(
+        '**默认搜索模式选择**<br>' +
+        '**串行模式**: 逐个调用引擎，找到高匹配度结果后停止，适合性能有限的环境。<br>' +
+        '**并行模式**: 同时调用所有启用引擎，找到高匹配度结果直接返回，响应快，但资源占用更多。'
+    ),
+    parallelHighConfidenceStrategy: Schema.union([
+        Schema.const('first').description('返回最先找到的结果'),
+        Schema.const('all').description('返回所有高匹配度结果'),
+    ]).default('first').description(
+        '并行模式下的高匹配度结果策略' 
+    )
+  }).description('搜索设置'),
+
+  puppeteer: puppeteerConfig.description('浏览器设置'),
 
   saucenao: Schema.object({
     apiKeys: Schema.array(Schema.string().role('secret')).description('SauceNAO 的 API Key 列表。\n\n注册登录 saucenao.com，在底部选项 \`Account\` -> \`api\` -> \`api key\`中生成。\n\n将api key: 后字符串完整复制并填入。'),
@@ -202,7 +225,7 @@ export const Config: Schema<Config> = Schema.object({
   }).description('搜图bot酱 设置'),
   
   yandex: Schema.object({
-    alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Yandex\`的首个结果。'),
+    alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Yandex\`的首个结果。<br>注意：在并行模式下，此结果将作为独立消息稍后发送，以免拖慢高置信度结果的响应。'),
     domain: Schema.union([
       Schema.const('ya.ru').description('ya.ru (推荐)'),
       Schema.const('yandex.com').description('yandex.com'),
@@ -210,7 +233,7 @@ export const Config: Schema<Config> = Schema.object({
   }).description('Yandex 设置'),
 
   ascii2d: Schema.object({
-      alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Ascii2D\`的首个结果。'),
+      alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Ascii2D\`的首个结果。<br>注意：在并行模式下，此结果将作为独立消息稍后发送，以免拖慢高置信度结果的响应。'),
   }).description('Ascii2D 设置'),
   
   yandere: Schema.object({
