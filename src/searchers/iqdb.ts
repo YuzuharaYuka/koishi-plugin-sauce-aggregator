@@ -1,4 +1,4 @@
-// --- START OF FILE iqdb.ts ---
+// --- START OF FILE src/searchers/iqdb.ts ---
 
 import { Context, Logger } from 'koishi'
 import { Searcher, SearchOptions, IQDB as IQDBConfig, DebugConfig, SearchEngineName, Config } from '../config'
@@ -85,6 +85,12 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
       
       if (html.includes('File is too large')) throw new Error('图片体积过大 (超过 8MB 限制)。');
       if (html.includes('You are searching too much.')) throw new Error('搜索过于频繁，请稍后再试。');
+      if (html.includes('high load') || html.includes('query has been queued')) {
+          throw new Error('服务器当前负载过高，请求已被置于队列中，请稍后再试。');
+      }
+      if (html.includes("Can't read query result")) {
+          throw new Error('服务器未能读取查询结果，可能是临时性问题，请稍后重试。');
+      }
 
       const $ = cheerio.load(html)
       const results: Searcher.Result[] = []
@@ -152,6 +158,13 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
       
       return results.filter(r => r.thumbnail && r.url)
     } catch (error) {
+      // --- THIS IS THE FIX ---
+      // Intercept the timeout error and provide a more user-friendly message.
+      if (error.code === 'ETIMEDOUT' || /timeout/i.test(error.message)) {
+          throw new Error('请求超时。IQDB 服务器可能正处于高负载状态，请稍后重试。');
+      }
+      // --- END OF FIX ---
+      
       logger.warn(`[iqdb] 请求出错: ${error.message}`)
       if (this.debugConfig.enabled && error.response) {
         logger.debug(`[iqdb] 响应状态: ${error.response.status}`)
@@ -161,4 +174,5 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
     }
   }
 }
-// --- END OF FILE iqdb.ts ---
+
+// --- END OF FILE src/searchers/iqdb.ts ---
