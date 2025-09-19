@@ -94,8 +94,7 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
   }
 
   private async parseResults(page: Page): Promise<Searcher.Result[]> {
-    // *** THIS IS THE FINAL FIX ***
-    // Target only the result cards in the first grid (the one without .mt-4).
+    // 仅选择第一个结果网格（高匹配度结果），该网格没有 .mt-4 类
     const highConfidenceResultsSelector = 'div.grid.grid-cols-1.gap-4:not(.mt-4) div.card-2';
 
     const rawResults = await page.$$eval(highConfidenceResultsSelector, (cards: HTMLDivElement[]) => {
@@ -146,4 +145,3 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
     });
   }
 }
-// --- END OF FILE src/searchers/soutubot.ts ---
