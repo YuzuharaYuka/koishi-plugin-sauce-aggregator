@@ -61,7 +61,6 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.on('ready', async () => {
     if (config.puppeteer.persistentBrowser) {
-        // --- THIS IS THE FIX (1/2) ---: 'iqdb' is removed from this list.
         const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
         const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
         const needsPuppeteerForEnhance = config.enhancerOrder.some(e => e.enabled && e.engine === 'danbooru');
@@ -83,7 +82,6 @@ export function apply(ctx: Context, config: Config) {
   }
 
   allSearchers.tracemoe = new TraceMoe(ctx, config.tracemoe, config.debug, config.requestTimeout);
-  // --- THIS IS THE FIX (2/2) ---: The 4th argument is now config.requestTimeout (a number).
   allSearchers.iqdb = new IQDB(ctx, config.iqdb, config.debug, config.requestTimeout);
   allSearchers.yandex = new Yandex(ctx, config.yandex, config.debug, puppeteerManager);
   allSearchers.ascii2d = new Ascii2D(ctx, config.ascii2d, config.debug, puppeteerManager);
@@ -143,6 +141,7 @@ export function apply(ctx: Context, config: Config) {
 
   const searchHandler = new SearchHandler(ctx, config, allSearchers, allEnabledSearchers);
 
+
   ctx.command('sauce [...text:string]', '聚合搜图')
     .alias('soutu','搜图')
     .option('all', '-a, --all 返回所有启用的引擎搜索结果')
@@ -152,7 +151,7 @@ export function apply(ctx: Context, config: Config) {
             const text = inputText || '';
             const words = text.split(/\s+/).filter(Boolean);
       
-            let searchersToUse: Searcher[] = allEnabledSearchers; // Default to all enabled for simplicity
+            let searchersToUse: Searcher[] = allEnabledSearchers; 
             let imageInput: string = text;
             let isSingleEngineSpecified = false;
       
@@ -194,7 +193,7 @@ export function apply(ctx: Context, config: Config) {
             
             const unescapedContent = h.unescape(nextMessageContent);
             const messageSession = { content: unescapedContent, elements: h.parse(unescapedContent) };
-            imgData = getImageUrlAndName(messageSession, unescapedContent);
+            imgData = getImageUrlAndName(messageSession, '');
             
             if (!imgData.url) return '未找到图片，已取消。';
           } catch (e) {
@@ -229,7 +228,8 @@ export function apply(ctx: Context, config: Config) {
           const collectedErrors: string[] = [];
   
           if (isSingleEngineSpecified || options.all) {
-              return await searchHandler.handleDirectSearch(searchersToUse, searchOptions, botUser, session, collectedErrors);
+              // --- THIS IS THE FIX ---: Pass `sortedEnhancers` to handleDirectSearch
+              return await searchHandler.handleDirectSearch(searchersToUse, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
           } else {
               if (config.search.mode === 'parallel') {
                   return await searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);

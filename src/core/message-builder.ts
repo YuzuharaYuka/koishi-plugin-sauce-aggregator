@@ -5,11 +5,8 @@ import { Config, Enhancer, SearchEngineName, Searcher as SearcherResult } from '
 
 const logger = new Logger('sauce-aggregator:message-builder');
 
-// This function now has an optional engineName parameter
 export async function createResultContent(ctx: Context, result: SearcherResult.Result, engineName?: SearchEngineName): Promise<h[]> {
     const textFields = [
-      // *** THIS IS THE FIX ***
-      // Add engine name to the message body if provided.
       engineName ? `引擎: ${engineName}` : null,
       result.similarity ? `相似度: ${result.similarity.toFixed(2)}%` : null,
       result.source ? `来源: ${result.source}` : null,
@@ -33,7 +30,6 @@ export async function createResultContent(ctx: Context, result: SearcherResult.R
 }
 
 export async function buildLowConfidenceNode(ctx: Context, result: SearcherResult.Result, engineName: SearchEngineName, botUser) {
-  // Pass the engineName to createResultContent
   const content = await createResultContent(ctx, result, engineName);
   return h('message', { 
       nickname: (result.source || engineName).substring(0, 10),
@@ -54,7 +50,6 @@ export async function buildHighConfidenceMessage(
     figureMessage.children.push(h('message', { nickname: '番剧封面', avatar: botUser.avatar }, h.image(result.coverImage)));
   }
   
-  // Do NOT pass engineName here to keep the high-confidence message clean
   const formattedContent = await createResultContent(ctx, result);
   const detailsNode = h('message', { nickname: '详细信息', avatar: botUser.avatar }, formattedContent);
   figureMessage.children.push(detailsNode);
@@ -97,4 +92,3 @@ export async function sendFigureMessage(session, figureMessage: h, errorMessage:
         }
     }
 }
-// --- END OF FILE src/core/message-builder.ts ---
