@@ -2,11 +2,42 @@
 import { Buffer } from 'buffer';
 import { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, encodePNGToStream, make } from 'pureimage';
 import { Readable, PassThrough } from 'stream';
-import { Logger, h } from 'koishi';
+import { Context, Logger, h, Time, sleep } from 'koishi'; // --- THIS IS THE FIX ---: Import sleep
 
 const logger = new Logger('sauce-aggregator:utils');
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+/**
+ * Downloads a file with retry logic.
+ * @param ctx The context object.
+ * @param url The URL to download from.
+ * @param options Options for the HTTP request and retry logic.
+ * @returns A promise that resolves to the downloaded buffer.
+ */
+export async function downloadWithRetry(ctx: Context, url: string, options: { retries: number; timeout: number, headers?: Record<string, string> }): Promise<Buffer> {
+    let lastError: Error = null;
+    for (let i = 0; i <= options.retries; i++) {
+        try {
+            const buffer = await ctx.http.get(url, {
+                responseType: 'arraybuffer',
+                timeout: options.timeout,
+                headers: options.headers,
+            });
+            return Buffer.from(buffer);
+        } catch (error) {
+            lastError = error;
+            if (i < options.retries) {
+                logger.warn(`[Downloader] Download failed for ${url} (attempt ${i + 1}/${options.retries + 1}): ${error.message}. Retrying in 2 seconds...`);
+                // --- THIS IS THE FIX ---: Use the imported sleep function
+                await sleep(2000); // Wait 2 seconds before retrying
+            }
+        }
+    }
+    logger.warn(`[Downloader] Failed to download ${url} after ${options.retries + 1} attempts.`);
+    throw lastError; // Throw the last recorded error
+}
+
 
 /**
  * Safely extracts plain text content from message elements.
@@ -128,3 +159,4 @@ export function getImageUrlAndName(session: any, text: string): { url: string; n
     }
     return { url, name };
 }
+// --- END OF FILE src/utils.ts ---
