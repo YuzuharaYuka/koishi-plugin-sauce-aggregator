@@ -8,6 +8,16 @@ const logger = new Logger('sauce-aggregator:utils');
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
+/**
+ * Safely extracts plain text content from message elements.
+ * @param elements The message elements array.
+ * @returns The concatenated, unescaped plain text.
+ */
+function extractPlainText(elements: h[]): string {
+    if (!elements) return '';
+    return h.select(elements, 'text').map(e => e.attrs.content).join('').trim();
+}
+
 export function getImageTypeFromUrl(url: string): string {
   const ext = url.split(/[?#]/)[0].split('.').pop()?.toLowerCase();
   switch (ext) {
@@ -71,32 +81,43 @@ export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<
 }
 
 export function getImageUrlAndName(session: any, text: string): { url: string; name: string } {
-    // *** THIS IS THE FIX ***
-    // Revised logic for clarity and correctness.
-    // Priority 1: Image element in the current message's elements.
-    let imgElement = session.elements?.find(e => e.type === 'img');
-
-    // Priority 2: Image element in the quoted message's elements.
-    if (!imgElement && session.quote) {
-        imgElement = session.quote.elements?.find(e => e.type === 'img');
-    }
-    
     let url: string;
-    if (imgElement?.attrs.src) {
-        url = imgElement.attrs.src;
+    let imgElement: h;
+    let textToParse = text;
+
+    // Priority 1: Image element in the current message
+    imgElement = session.elements?.find(e => e.type === 'img');
+    url = imgElement?.attrs.src;
+    
+    // Priority 2: If no image element, check if the current message text is a URL
+    if (!url) {
+        const rawCurrentText = extractPlainText(session.elements);
+        if (rawCurrentText) {
+            textToParse = rawCurrentText;
+        }
     }
     
-    // Priority 3: A valid URL found in the text content.
-    if (!url && text) {
+    // Priority 3: If still no URL and it's a reply, check the quoted message
+    if (!url && session.quote) {
+        imgElement = session.quote.elements?.find(e => e.type === 'img');
+        url = imgElement?.attrs.src;
+        // Priority 4: If quoted message has no image, get its raw text to parse
+        if (!url) {
+            textToParse = extractPlainText(session.quote.elements);
+        }
+    }
+
+    // Priority 5: Parse the determined text for a URL if no image element was ever found
+    if (!url && textToParse) {
         try {
-            const potentialUrl = text.trim();
+            const potentialUrl = textToParse.trim().split(/\s+/)[0];
             new URL(potentialUrl);
             if (potentialUrl.startsWith('http')) {
                 url = potentialUrl;
             }
         } catch (_) {}
     }
-    
+
     if (!url) return { url: null, name: null };
     
     const rawName = (imgElement?.attrs.file || url.split('/').pop().split('?')[0]) || 'image.jpg';
@@ -107,4 +128,3 @@ export function getImageUrlAndName(session: any, text: string): { url: string; n
     }
     return { url, name };
 }
-// --- END OF FILE src/utils.ts ---
