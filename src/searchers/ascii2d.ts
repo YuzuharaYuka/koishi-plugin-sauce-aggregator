@@ -50,7 +50,7 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
       await page.waitForSelector('div.item-box');
       if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 已加载颜色搜索 (color) 结果页: ${page.url()}`);
       
-      if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 正在解析最终结果页面...`);
+      if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 正在解析结果页面...`);
       
       const results = await this.parseResults(page);
       return results.slice(0, options.maxResults);
@@ -68,8 +68,7 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
 
   private async parseResults(page: Page): Promise<Searcher.Result[]> {
     const rawResults = await page.$$eval('div.item-box', (boxes: HTMLDivElement[]) => {
-        // *** THIS IS THE FIX ***
-        // The first item-box is the source image, so we skip it.
+        // 第一个 item-box 是源图，跳过
         return boxes.slice(1).map(box => {
             if (box.querySelector('h5')?.textContent === '広告') return null;
 
@@ -78,7 +77,6 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
             if (!thumbnailElement || !detailBox) return null;
 
             const links = Array.from(detailBox.querySelectorAll('h6 a')) as HTMLAnchorElement[];
-            // If there are no links in the detail box, it's not a real result.
             if (links.length === 0) return null;
 
             const sourceInfoElement = detailBox.querySelector('h6 small.text-muted');
@@ -87,16 +85,8 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
             const authorLink = links.find(a => a.href.includes('/users/') || a.href.includes('/i/user/'));
             const mainLink = links.find(a => !a.href.includes('/users/') && !a.href.includes('/i/user/'));
 
-            const searchTypeElement = box.closest('.row')?.previousElementSibling;
-            let searchType = '未知';
-            if (searchTypeElement && searchTypeElement.tagName === 'H5') {
-                searchType = searchTypeElement.textContent || '未知';
-            } else {
-                const outerTitle = document.querySelector('h5');
-                if (outerTitle) {
-                    searchType = outerTitle.textContent;
-                }
-            }
+            // 之前获取 searchType 的逻辑比较脆弱，这里简化，因为我们只进行第一步搜索
+            const searchType = '色合検索';
             
             return {
                 thumbnail: new URL(thumbnailElement.src, location.origin).href,
@@ -118,4 +108,3 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
     }));
   }
 }
-// --- END OF FILE src/searchers/ascii2d.ts ---
