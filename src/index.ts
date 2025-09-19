@@ -58,20 +58,6 @@ export const usage = `
 
 export function apply(ctx: Context, config: Config) {
   const puppeteerManager = new PuppeteerManager(ctx, config);
-
-  ctx.on('ready', async () => {
-    if (config.puppeteer.persistentBrowser) {
-        const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
-        const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
-        const needsPuppeteerForEnhance = config.enhancerOrder.some(e => e.enabled && e.engine === 'danbooru');
-        
-        if (needsPuppeteerForSearch || needsPuppeteerForEnhance) {
-            await puppeteerManager.initialize();
-        }
-    }
-  });
-
-  ctx.on('dispose', () => puppeteerManager.dispose());
   
   const allSearchers: Record<string, Searcher> = {};
   
@@ -116,8 +102,11 @@ export function apply(ctx: Context, config: Config) {
 
       if (areKeysProvided) {
           const constructorArgs: any[] = [ctx, generalConfig, config.debug];
-          if (name === 'yandere' || name === 'gelbooru' || name === 'pixiv') constructorArgs.push(config.requestTimeout);
-          if (entry.requiresPuppeteer) constructorArgs.push(puppeteerManager);
+          if (name === 'danbooru') {
+            constructorArgs.push(puppeteerManager, config.enhancerRetryCount);
+          } else {
+            constructorArgs.push(config.requestTimeout, config.enhancerRetryCount);
+          }
           
           allEnhancers[name] = new entry.constructor(...constructorArgs);
       } else {
@@ -128,6 +117,20 @@ export function apply(ctx: Context, config: Config) {
   const sortedEnhancers = config.enhancerOrder
     .filter(item => item.enabled && allEnhancers[item.engine])
     .map(item => allEnhancers[item.engine]);
+    
+  ctx.on('ready', async () => {
+    if (config.puppeteer.persistentBrowser) {
+        const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
+        const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
+        const needsPuppeteerForEnhance = sortedEnhancers.some(e => e.name === 'danbooru');
+        
+        if (needsPuppeteerForSearch || needsPuppeteerForEnhance) {
+            await puppeteerManager.initialize();
+        }
+    }
+  });
+
+  ctx.on('dispose', () => puppeteerManager.dispose());
       
   if (allEnabledSearchers.length > 0) {
       logger.info(`已启用的搜图引擎顺序: ${allEnabledSearchers.map(s => s.name).join(', ')}`);
@@ -143,7 +146,7 @@ export function apply(ctx: Context, config: Config) {
     .option('all', '-a, --all 返回所有启用的引擎搜索结果')
     .action(async ({ session, options }, text) => {
 
-        function parseInput(inputText: string, options: any) {
+        function parseInput(inputText: string) {
             const text = inputText || '';
             const words = text.split(/\s+/).filter(Boolean);
       
@@ -171,7 +174,7 @@ export function apply(ctx: Context, config: Config) {
             return { searchersToUse, imageInput, isSingleEngineSpecified };
         }
 
-        const { searchersToUse, imageInput, isSingleEngineSpecified } = parseInput(text, options);
+        const { searchersToUse, imageInput, isSingleEngineSpecified } = parseInput(text);
 
         if (isSingleEngineSpecified) {
             if (searchersToUse.length === 0) return '指定的搜图引擎无效或未正确配置。';
@@ -224,7 +227,26 @@ export function apply(ctx: Context, config: Config) {
           const collectedErrors: string[] = [];
   
           if (isSingleEngineSpecified || options.all) {
-              return await searchHandler.handleDirectSearch(searchersToUse, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+              const mainSearchers: Searcher[] = [];
+              const attachSearchers: Searcher[] = [];
+
+              if (!options.all) {
+                  const alwaysAttachNames: SearchEngineName[] = [];
+                  if (config.yandex.alwaysAttach && allSearchers.yandex) alwaysAttachNames.push('yandex');
+                  if (config.ascii2d.alwaysAttach && allSearchers.ascii2d) alwaysAttachNames.push('ascii2d');
+
+                  mainSearchers.push(...searchersToUse);
+
+                  for (const searcher of allEnabledSearchers) {
+                      if (alwaysAttachNames.includes(searcher.name) && searchersToUse[0]?.name !== searcher.name) {
+                          attachSearchers.push(searcher);
+                      }
+                  }
+              } else {
+                  mainSearchers.push(...searchersToUse);
+              }
+              
+              return await searchHandler.handleDirectSearch(mainSearchers, attachSearchers, isSingleEngineSpecified, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
           } else {
               if (config.search.mode === 'parallel') {
                   return await searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
@@ -242,7 +264,7 @@ export function apply(ctx: Context, config: Config) {
     });
 
   const linkParsingRegistry = [
-    { name: 'pixiv', regex: /(www\.pixiv\.net\/(en\/)?artworks\/\d+|i\.pximg\.net)/, enhancer: allEnhancers.pixiv, config: config.pixiv },
+    { name: 'pixiv', regex: /(www\.pixiv\.net\/(en\/)?artworks\/\d+|i\.pximg\.net|www\.pixiv\.net\/member_illust\.php\?.*illust_id=\d+)/, enhancer: allEnhancers.pixiv, config: config.pixiv },
     { name: 'danbooru', regex: /danbooru\.donmai\.us\/(posts|post\/show)\/\d+/, enhancer: allEnhancers.danbooru, config: config.danbooru },
     { name: 'gelbooru', regex: /gelbooru\.com\/index\.php\?.*id=\d+/, enhancer: allEnhancers.gelbooru, config: config.gelbooru },
     { name: 'yandere', regex: /yande\.re\/post\/show\/\d+/, enhancer: allEnhancers.yandere, config: config.yandere },
@@ -282,6 +304,10 @@ export function apply(ctx: Context, config: Config) {
               const enhancedDetailsNode = h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details);
               figureMessage.children.push(enhancedDetailsNode);
               
+              if (enhancedData.additionalImages?.length > 0) {
+                figureMessage.children.push(...enhancedData.additionalImages);
+              }
+
               await session.send(figureMessage);
               
               return; 
@@ -295,6 +321,6 @@ export function apply(ctx: Context, config: Config) {
     }
     
     return next();
-  }, config.prependLinkParsingMiddleware); // <-- The logic is applied here
+  }, config.prependLinkParsingMiddleware);
 }
 // --- END OF FILE src/index.ts ---
