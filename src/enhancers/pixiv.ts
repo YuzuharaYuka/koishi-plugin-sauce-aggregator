@@ -1,7 +1,7 @@
 // --- START OF FILE src/enhancers/pixiv.ts ---
 import { Context, Logger, h } from 'koishi'
 import { Pixiv as PixivConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
-import { getImageTypeFromUrl } from '../utils'
+import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
@@ -28,13 +28,14 @@ interface PixivIllust {
       medium: string;
     };
   }[];
+  page_count: number;
 }
 
 class PixivApiService {
   private accessToken: string | null = null;
   private readonly headers: Record<string, string>;
   
-  constructor(private ctx: Context, private config: PixivConfig.Config, private debugConfig: DebugConfig, private requestTimeout: number) {
+  constructor(private ctx: Context, private config: PixivConfig.Config, private debugConfig: DebugConfig, private requestTimeout: number, private retries: number) {
     this.headers = {
       'app-os': 'ios',
       'app-os-version': '14.6',
@@ -106,14 +107,13 @@ class PixivApiService {
 
   public async downloadImage(url: string): Promise<Buffer | null> {
     try {
-      const arrayBuffer = await this.ctx.http.get(url, {
-        headers: { 'Referer': 'https://www.pixiv.net/' },
-        responseType: 'arraybuffer',
-        timeout: this.requestTimeout,
+      return await downloadWithRetry(this.ctx, url, {
+          retries: this.retries,
+          timeout: this.requestTimeout,
+          headers: { 'Referer': 'https://www.pixiv.net/' }
       });
-      return Buffer.from(arrayBuffer);
     } catch (error) {
-      logger.warn(`[pixiv] 图片下载失败 (URL: ${url}):`, error.message);
+      // The error is already logged by downloadWithRetry, so just return null
       return null;
     }
   }
@@ -123,8 +123,8 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
   public readonly name: 'pixiv' = 'pixiv';
   private api: PixivApiService;
   
-  constructor(public ctx: Context, public config: PixivConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
-      this.api = new PixivApiService(ctx, config, debugConfig, requestTimeout * 1000);
+  constructor(public ctx: Context, public config: PixivConfig.Config, public debugConfig: DebugConfig, requestTimeout: number, enhancerRetryCount: number) {
+      this.api = new PixivApiService(ctx, config, debugConfig, requestTimeout * 1000, enhancerRetryCount);
   }
 
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -155,32 +155,47 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
       
       const details = this.buildDetailNodes(illust);
       
-      let downloadUrl: string;
-      // *** THIS IS THE FIX ***
-      // Handle multi-page and single-page illusts separately to ensure type safety.
-      if (illust.meta_pages && illust.meta_pages.length > 0) {
-        const image_urls = illust.meta_pages[0].image_urls;
+      let firstImageBuffer: Buffer;
+      let firstImageType: string;
+      const additionalImages: h[] = [];
+      const botUser = await this.ctx.bots[0]?.getSelf();
+
+      const pages = illust.meta_pages?.length > 0 ? illust.meta_pages : [{ image_urls: { original: illust.meta_single_page.original_image_url, large: illust.meta_single_page.original_image_url, medium: illust.meta_single_page.original_image_url } }];
+      const imagesToFetch = this.config.maxImagesInPost === 0 ? pages : pages.slice(0, this.config.maxImagesInPost);
+
+      for (let i = 0; i < imagesToFetch.length; i++) {
+        const page = imagesToFetch[i];
+        let downloadUrl: string;
+
         switch(this.config.postQuality) {
-            case 'original': downloadUrl = image_urls.original; break;
-            case 'large': downloadUrl = image_urls.large; break;
-            case 'medium': downloadUrl = image_urls.medium; break;
-            default: downloadUrl = image_urls.large; break; // Default to large for multi-page
+            case 'original': downloadUrl = page.image_urls.original; break;
+            case 'large': downloadUrl = page.image_urls.large; break;
+            case 'medium': downloadUrl = page.image_urls.medium; break;
+            default: downloadUrl = page.image_urls.large; break;
         }
-      } else {
-        // For single page, all qualities point to the same original URL.
-        downloadUrl = illust.meta_single_page.original_image_url;
+
+        if (!downloadUrl) continue;
+        
+        if (this.debugConfig.enabled) logger.info(`[pixiv] 正在下载图源图片 (P${i+1}, ${this.config.postQuality} 质量)... URL: ${downloadUrl}`);
+        const imageBuffer = await this.api.downloadImage(downloadUrl);
+        const imageType = getImageTypeFromUrl(downloadUrl);
+
+        if (!imageBuffer) continue;
+
+        if (i === 0) {
+            firstImageBuffer = imageBuffer;
+            firstImageType = imageType;
+        } else {
+            additionalImages.push(h('message', { nickname: `图源图片 P${i+1}`, avatar: botUser?.avatar }, h.image(imageBuffer, imageType)));
+        }
       }
       
-      if (!downloadUrl) {
-        if (this.debugConfig.enabled) logger.warn(`[pixiv] 帖子 ${postId} 缺少任何可用的图片 URL。`);
+      if (!firstImageBuffer) {
+        if (this.debugConfig.enabled) logger.warn(`[pixiv] 帖子 ${postId} 的主图片下载失败。`);
         return { details };
       }
 
-      if (this.debugConfig.enabled) logger.info(`[pixiv] 正在下载图源图片 (${this.config.postQuality} 质量)... URL: ${downloadUrl}`);
-      const imageBuffer = await this.api.downloadImage(downloadUrl);
-      const imageType = getImageTypeFromUrl(downloadUrl);
-
-      return { details, imageBuffer, imageType };
+      return { details, imageBuffer: firstImageBuffer, imageType: firstImageType, additionalImages };
     } catch (error) {
       logger.error(`[pixiv] 获取图源信息 (ID: ${postId}) 时发生错误:`, error);
       return null;
@@ -188,7 +203,7 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
   }
 
   private findPixivUrl(result: Searcher.Result): string | null {
-    const urlRegex = /(https?:\/\/(?:(?:www\.)?pixiv\.net\/(?:en\/)?artworks\/\d+|i\.pximg\.net\/[^\s"]+))/;
+    const urlRegex = /(https?:\/\/(?:www\.)?pixiv\.net\/(?:en\/)?(?:artworks\/\d+|member_illust\.php\?.*illust_id=\d+)|i\.pximg\.net\/[^\s"]+)/;
     
     if (result.url && urlRegex.test(result.url)) return result.url;
     
@@ -203,6 +218,9 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
 
   private parsePostId(url: string): string | null {
     let match = url.match(/artworks\/(\d+)/);
+    if (match) return match[1];
+    
+    match = url.match(/illust_id=(\d+)/);
     if (match) return match[1];
 
     match = url.match(/\/(\d+)(?:_p\d+)?(?:\.\w+)?$/);
@@ -225,6 +243,10 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
       info.push(`等级: R-18${illust.x_restrict === 2 ? 'G' : ''}`);
     }
     
+    if (illust.page_count > 1) {
+        info.push(`图片数量: ${illust.page_count}`);
+    }
+
     const tags = illust.tags.map(t => t.translated_name || t.name).filter(Boolean);
     const displayedTags = tags.slice(0, 15).join(', ');
     const remainingCount = tags.length - 15;
