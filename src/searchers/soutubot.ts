@@ -43,37 +43,24 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
       if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 正在上传临时文件: ${tempFilePath}`);
       await inputUploadHandle.uploadFile(tempFilePath);
       
-      const firstResultSelector = 'div.card-2';
-      const lowConfidenceButtonSelector = 'button.el-button--warning';
-      const resultsInfoSelector = 'div.text-center > h3';
+      const firstResultSelector = '.card-2';
+      const noResultSelector = 'div.text-center > h3';
       
-      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 等待搜索结果加载 (等待 '${firstResultSelector}' 或 '${resultsInfoSelector}')...`);
-
-      await Promise.race([
-        page.waitForSelector(firstResultSelector),
-        page.waitForSelector(resultsInfoSelector),
-      ]);
-
-      const hasResultCards = await page.$(firstResultSelector);
-      const lowConfidenceButton = await page.$(lowConfidenceButtonSelector);
-
-      if (!hasResultCards && lowConfidenceButton) {
-        if (this.debugConfig.enabled) logger.info('[soutubot] 未直接显示结果，正在点击“显示剩余低匹配度结果”按钮...');
-        await page.click(lowConfidenceButtonSelector);
-        await page.waitForSelector(firstResultSelector);
-      } else if (!hasResultCards) {
-        if (this.debugConfig.enabled) logger.info('[soutubot] 页面已加载，但未找到任何结果卡片。');
-        return [];
-      }
-
-      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 正在解析结果页面: ${page.url()}`);
+      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 等待搜索结果加载 (等待 '${firstResultSelector}' 或 '${noResultSelector}')...`);
       
+      await page.waitForSelector(`${firstResultSelector}, ${noResultSelector}`);
+
+      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 结果已加载，正在浏览器端解析...`);
+
       if (this.debugConfig.logApiResponses.includes(this.name)) {
         const html = await page.content();
-        logger.info(`[soutubot] Raw HTML length: ${html.length}.`)
+        logger.info({ '[soutubot] Raw HTML Response': html });
       }
       
-      const results = await this.parseResults(page);
+      // --- THIS IS THE OPTIMIZATION ---: Determine max number of results needed
+      const maxNeeded = Math.max(options.maxResults, this.config.maxHighConfidenceResults || 1);
+
+      const results = await this.parseResults(page, maxNeeded);
       return results;
 
     } catch (error) {
@@ -93,16 +80,15 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
     }
   }
 
-  private async parseResults(page: Page): Promise<Searcher.Result[]> {
-    // 仅选择第一个结果网格（高匹配度结果），该网格没有 .mt-4 类
-    const highConfidenceResultsSelector = 'div.grid.grid-cols-1.gap-4:not(.mt-4) div.card-2';
-
-    const rawResults = await page.$$eval(highConfidenceResultsSelector, (cards: HTMLDivElement[]) => {
+  private async parseResults(page: Page, maxNeeded: number): Promise<Searcher.Result[]> {
+    // --- THIS IS THE OPTIMIZATION ---: Pass maxNeeded and slice in the browser.
+    const rawResults = await page.$$eval('.card-2', (cards: HTMLDivElement[], maxNeeded) => {
         const langMap = { cn: '中文', jp: '日文', gb: '英文', kr: '韩文' };
         
-        return cards.map(card => {
-            const similarityEl = Array.from(card.querySelectorAll('span')).find(el => el.textContent.trim() === '匹配度:');
-            const similarityText = similarityEl ? similarityEl.nextElementSibling?.textContent.trim().replace('%', '') : '0';
+        // Process only the top N cards needed, right in the browser.
+        return cards.slice(0, maxNeeded).map(card => {
+            const similarityLabel = Array.from(card.querySelectorAll('span')).find(el => el.textContent.trim() === '匹配度:');
+            const similarityText = similarityLabel ? similarityLabel.nextElementSibling?.textContent.trim().replace('%', '') : '0';
 
             const title = (card.querySelector('.font-semibold span') as HTMLElement)?.innerText;
             const thumbnail = (card.querySelector('a[target="_blank"] img') as HTMLImageElement)?.src;
@@ -128,12 +114,17 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
                 imagePageText: imagePageLink?.innerText.trim()
             };
         }).filter(Boolean);
-    });
+    }, maxNeeded); // Pass maxNeeded as an argument into page.$$eval
 
     return rawResults.map(res => {
         const details: string[] = [];
         if (res.language) details.push(`语言: ${res.language}`);
-        if (res.imageUrl) details.push(`${res.imagePageText}: ${res.imageUrl}`);
+        const pageMatch = res.imagePageText.match(/\(P(\d+)\)/);
+        if (res.imageUrl) {
+            let linkText = "图片页";
+            if (pageMatch) linkText += ` (P${pageMatch[1]})`;
+            details.push(`${linkText}: ${res.imageUrl}`);
+        }
         
         return {
             thumbnail: res.thumbnail,
@@ -145,3 +136,4 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
     });
   }
 }
+// --- END OF FILE src/searchers/soutubot.ts ---

@@ -27,8 +27,33 @@ export class SearchHandler {
         }
     }
 
-    public async handleDirectSearch(searchers: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
-        const searcherOutputs = await Promise.all(searchers.map(async s => {
+    private async handleAttachEngines(attachEngines: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[]) {
+        if (attachEngines.length === 0) return;
+
+        const attachOutputs = await Promise.all(attachEngines.map(s => this.performSearch(s, options)));
+        const successfulAttachOutputs = attachOutputs.filter(o => o.results.length > 0);
+        
+        if (successfulAttachOutputs.length === 0) {
+            attachOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
+            return;
+        }
+
+        const figureMessage = h('figure');
+        const nodePromises = successfulAttachOutputs.flatMap(output => 
+            output.results.slice(0, this.config.maxResults).map(result => 
+                MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
+            )
+        );
+        figureMessage.children.push(...await Promise.all(nodePromises));
+
+        if (figureMessage.children.length > 0) {
+            await session.send('来自附加引擎的结果:');
+            await MessageBuilder.sendFigureMessage(session, figureMessage, '发送附加结果失败');
+        }
+    }
+
+    public async handleDirectSearch(mainSearchers: Searcher[], attachSearchers: Searcher[], isSingleEngineSearch: boolean, options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
+        const mainOutputs = await Promise.all(mainSearchers.map(async s => {
             const output = await this.performSearch(s, options);
             if (output.error) collectedErrors.push(output.error);
             return output;
@@ -37,18 +62,17 @@ export class SearchHandler {
         const highConfidenceGroups: { engine: SearchEngineName; results: SearcherResult.Result[] }[] = [];
         const lowConfidenceGroups: { engine: SearchEngineName; results: SearcherResult.Result[] }[] = [];
 
-        for (const output of searcherOutputs) {
+        for (const output of mainOutputs) {
             if (output.results.length === 0) continue;
 
             const engineConfig = this.config[output.engine] as { confidenceThreshold?: number };
             const specificThreshold = engineConfig?.confidenceThreshold;
             const thresholdToUse = (specificThreshold && specificThreshold > 0) ? specificThreshold : this.config.confidenceThreshold;
+            
+            const high: SearcherResult.Result[] = [];
+            const low: SearcherResult.Result[] = [];
 
-            const high = [];
-            const low = [];
-
-            // Only consider up to maxResults per engine
-            output.results.slice(0, this.config.maxResults).forEach(result => {
+            output.results.forEach(result => {
                 if (result.similarity >= thresholdToUse) {
                     high.push(result);
                 } else {
@@ -57,18 +81,11 @@ export class SearchHandler {
             });
 
             if (high.length > 0) highConfidenceGroups.push({ engine: output.engine, results: high });
-            if (low.length > 0) lowConfidenceGroups.push({ engine: output.engine, results: low });
+            if (low.length > 0) lowConfidenceGroups.push({ engine: output.engine, results: low.slice(0, this.config.maxResults) });
         }
-
-        if (highConfidenceGroups.length === 0 && lowConfidenceGroups.length === 0) {
-            let finalMessage = '未找到任何相关结果。';
-            if (collectedErrors.length > 0) {
-                finalMessage += '\n\n遇到的问题:\n' + collectedErrors.join('\n');
-            }
-            return finalMessage;
-        }
-
+        
         const figureMessage = h('figure');
+        const processedEnhancements = new Set<string>();
 
         if (highConfidenceGroups.length > 0) {
             await session.send('搜索完成，找到高匹配度结果:');
@@ -76,25 +93,35 @@ export class SearchHandler {
                 let resultsToShow = group.results;
                 if (group.engine === 'soutubot') {
                     resultsToShow = group.results.slice(0, this.config.soutubot.maxHighConfidenceResults);
-                } else if (searchers.length > 1) { // in --all mode, show only the best for non-soutubot
+                } else if (!isSingleEngineSearch) { // In --all mode, show only the best for non-soutubot
                     resultsToShow = [group.results[0]];
                 }
                 for (const result of resultsToShow) {
-                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, group.engine, botUser);
+                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, group.engine, botUser, processedEnhancements);
                 }
             }
-        } else {
+        } else if (lowConfidenceGroups.length > 0) {
             await session.send('未找到高匹配度结果，显示如下:');
         }
+        
+        if (!isSingleEngineSearch || (isSingleEngineSearch && highConfidenceGroups.length === 0)) {
+            const lowConfidencePromises = lowConfidenceGroups.flatMap(group =>
+                group.results.map(result => MessageBuilder.buildLowConfidenceNode(this.ctx, result, group.engine, botUser))
+            );
+            figureMessage.children.push(...await Promise.all(lowConfidencePromises));
+        }
+        
+        if (figureMessage.children.length > 0) {
+             await MessageBuilder.sendFigureMessage(session, figureMessage, '合并转发结果失败');
+        } else if (attachSearchers.length === 0) {
+            let finalMessage = '未找到任何相关结果。';
+            if (collectedErrors.length > 0) {
+                finalMessage += '\n\n遇到的问题:\n' + collectedErrors.join('\n');
+            }
+            return session.send(finalMessage);
+        }
 
-        const lowConfidencePromises = lowConfidenceGroups.flatMap(group =>
-            group.results.map(result =>
-                MessageBuilder.buildLowConfidenceNode(this.ctx, result, group.engine, botUser)
-            )
-        );
-        figureMessage.children.push(...await Promise.all(lowConfidencePromises));
-
-        await MessageBuilder.sendFigureMessage(session, figureMessage, '合并转发结果失败');
+        await this.handleAttachEngines(attachSearchers, options, botUser, session, collectedErrors);
 
         if (collectedErrors.length > 0) {
             await session.send('部分引擎搜索失败:\n' + collectedErrors.join('\n'));
@@ -137,11 +164,16 @@ export class SearchHandler {
             }
   
             const figureMessage = h('figure');
+            const processedEnhancements = new Set<string>();
             for (const result of resultsToShow) {
-                await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, highConfidenceSearcherName, botUser);
+                await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, highConfidenceSearcherName, botUser, processedEnhancements);
             }
-            await this.attachAdditionalResults(options, botUser, session, collectedErrors, executedOutputs, figureMessage);
             await MessageBuilder.sendFigureMessage(session, figureMessage, '发送高匹配度结果失败');
+            
+            const attachEngines = this.allEnabledSearchers.filter(s => 
+                (s.name === 'yandex' && this.config.yandex.alwaysAttach) || 
+                (s.name === 'ascii2d' && this.config.ascii2d.alwaysAttach));
+            await this.handleAttachEngines(attachEngines, options, botUser, session, collectedErrors);
             return;
         }
         
@@ -181,6 +213,7 @@ export class SearchHandler {
     public async handleParallelSearch(searchers: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
         let highConfidenceSent = false;
         const allOutputs: SearchOutput[] = [];
+        const processedEnhancements = new Set<string>();
     
         const attachEngines: Searcher[] = [];
         const mainSearchers: Searcher[] = [];
@@ -215,26 +248,13 @@ export class SearchHandler {
                 await session.send(`[${output.engine}] 找到高匹配度结果:`);
                 const figureMessage = h('figure');
                 for (const result of resultsToShow) {
-                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, output.engine, botUser);
+                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, output.engine, botUser, processedEnhancements);
                 }
                 await MessageBuilder.sendFigureMessage(session, figureMessage, `[${output.engine}] 发送高匹配度结果失败`);
             }
         };
     
-        attachEngines.forEach(async (searcher) => {
-            const output = await this.performSearch(searcher, options);
-            if (output.error) {
-                collectedErrors.push(output.error);
-                session.send(`[${searcher.name}] 附加结果搜索失败: ${output.error}`);
-            } else if (output.results.length > 0) {
-                const result = output.results[0];
-                const figureMessage = h('figure');
-                const resultNode = await MessageBuilder.buildLowConfidenceNode(this.ctx, result, searcher.name, botUser);
-                figureMessage.children.push(resultNode);
-                await session.send(`来自 [${searcher.name}] 的附加结果:`);
-                await MessageBuilder.sendFigureMessage(session, figureMessage, `[${searcher.name}] 发送附加结果失败`);
-            }
-        });
+        const attachPromise = this.handleAttachEngines(attachEngines, options, botUser, session, collectedErrors);
     
         const searchPromises = mainSearchers.map(async (searcher) => {
             const output = await this.performSearch(searcher, options);
@@ -245,7 +265,7 @@ export class SearchHandler {
             }
         });
     
-        await Promise.all(searchPromises);
+        await Promise.all([...searchPromises, attachPromise]);
     
         if (!highConfidenceSent) {
             const successfulOutputs = allOutputs.filter(o => o.results.length > 0);
@@ -274,29 +294,7 @@ export class SearchHandler {
     }
 
     private async attachAdditionalResults(options: SearchOptions, botUser, session, collectedErrors: string[], executedOutputs: SearchOutput[], figureMessage: h | null) {
-        const attachEngines: { name: SearchEngineName; config: any; searcher: Searcher }[] = [
-            { name: 'yandex', config: this.config.yandex, searcher: this.allSearchers.yandex },
-            { name: 'ascii2d', config: this.config.ascii2d, searcher: this.allSearchers.ascii2d }
-        ];
-        
-        for (const eng of attachEngines) {
-            if (eng.config.alwaysAttach && eng.searcher) {
-                let output = executedOutputs.find(o => o.engine === eng.name);
-                if (!output) {
-                    output = await this.performSearch(eng.searcher, options);
-                    if(output.error) collectedErrors.push(output.error);
-                }
-                if (output?.results?.[0]) {
-                    if (figureMessage) {
-                        const result = output.results[0];
-                        const headerNode = h('message', { nickname: `--- ${eng.name} (附加结果) ---`, avatar: botUser.avatar });
-                        const resultNode = await MessageBuilder.buildLowConfidenceNode(this.ctx, result, eng.name, botUser);
-                        figureMessage.children.push(headerNode, resultNode);
-                    } else if (!executedOutputs.some(o => o.engine === eng.name)) {
-                        executedOutputs.push(output);
-                    }
-                }
-            }
-        }
+        // This method is now obsolete and can be removed
     }
 }
+// --- END OF FILE src/core/search-handler.ts ---
