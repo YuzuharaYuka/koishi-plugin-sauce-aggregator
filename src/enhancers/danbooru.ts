@@ -34,9 +34,11 @@ interface DanbooruPost {
 export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
   public readonly name: 'danbooru' = 'danbooru';
   private puppeteer: PuppeteerManager;
+  private retries: number;
   
-  constructor(public ctx: Context, public config: DanbooruConfig.Config, public debugConfig: DebugConfig, puppeteerManager: PuppeteerManager) {
+  constructor(public ctx: Context, public config: DanbooruConfig.Config, public debugConfig: DebugConfig, puppeteerManager: PuppeteerManager, enhancerRetryCount: number) {
     this.puppeteer = puppeteerManager;
+    this.retries = enhancerRetryCount;
   }
 
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -90,24 +92,34 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       if (downloadUrl) {
         if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
         
-        // --- THIS IS THE FIX ---
-        // Use page.evaluate to fetch the image and return it as a Base64 string.
-        // This avoids Puppeteer's internal buffer limitations for large files.
-        const imageBase64 = await page.evaluate(async (url) => {
-          const response = await fetch(url, { mode: 'cors' }); // Add mode: 'cors' for safety
-          if (!response.ok) {
-            throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
-          }
-          const buffer = await response.arrayBuffer();
-          // A robust way to convert ArrayBuffer to Base64
-          let binary = '';
-          const bytes = new Uint8Array(buffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-              binary += String.fromCharCode(bytes[i]);
-          }
-          return btoa(binary);
-        }, downloadUrl);
+        const imageBase64 = await page.evaluate(async (url, retries) => {
+            const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+            let lastError: Error = null;
+
+            for (let i = 0; i <= retries; i++) {
+                try {
+                    const response = await fetch(url, { mode: 'cors' });
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+                    }
+                    const buffer = await response.arrayBuffer();
+                    let binary = '';
+                    const bytes = new Uint8Array(buffer);
+                    const len = bytes.byteLength;
+                    for (let j = 0; j < len; j++) {
+                        binary += String.fromCharCode(bytes[j]);
+                    }
+                    return btoa(binary);
+                } catch (error) {
+                    lastError = error;
+                    if (i < retries) {
+                        console.log(`[Danbooru Downloader] Attempt ${i + 1} failed. Retrying in 2s...`);
+                        await sleep(2000);
+                    }
+                }
+            }
+            throw new Error(`Failed to download after ${retries + 1} attempts. Last error: ${lastError.message}`);
+        }, downloadUrl, this.retries);
 
         if (!imageBase64) {
           throw new Error('Failed to download image or convert to Base64 in browser context.');
@@ -138,7 +150,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       if (this.debugConfig.enabled) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }
-      throw error;
+      throw new Error(`[danbooru] 处理失败: ${error.message}`);
     } finally {
       if (page && !page.isClosed()) await page.close();
     }

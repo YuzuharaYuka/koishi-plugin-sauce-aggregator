@@ -80,17 +80,11 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
 
       if (this.debugConfig.enabled) logger.info(`[iqdb] 收到响应页面，长度: ${html.length}`)
       if (this.debugConfig.logApiResponses.includes(this.name)) {
-        // --- THIS IS THE FIX ---: Log as a structured object for better console output.
         logger.info({ '[iqdb] Raw HTML Response': html });
       }
       
       if (html.includes('File is too large')) throw new Error('图片体积过大 (超过 8MB 限制)。');
       if (html.includes('You are searching too much.')) throw new Error('搜索过于频繁，请稍后再试。');
-      
-      // --- THIS IS THE FIX ---: Removed the faulty error check.
-      // The "high load" or "queued" messages can now appear on successful result pages,
-      // so checking for them is no longer a reliable way to detect errors.
-      // We will now rely on the absence of result elements instead.
       
       if (html.includes("Can't read query result")) {
           throw new Error('服务器未能读取查询结果，可能是临时性问题，请稍后重试。');
@@ -112,7 +106,6 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
       resultElements.each((_, element) => {
         try {
           const $div = $(element)
-          // Skip the "Your image" block which has no 'th' for match type
           if ($div.find('th').length === 0) return
 
           const similarityMatch = $div.find('tr:last-child td').text().match(/(\d+\.?\d*)% similarity/)
@@ -175,3 +168,5 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
     }
   }
 }
+
+// --- END OF FILE src/searchers/iqdb.ts ---

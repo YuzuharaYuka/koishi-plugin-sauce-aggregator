@@ -1,8 +1,8 @@
-// --- START OF FILE yande.ts ---
+// --- START OF FILE src/enhancers/yande.ts ---
 
 import { Context, Logger, h } from 'koishi'
 import { YandeRe as YandeReConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
-import { getImageTypeFromUrl } from '../utils'
+import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
@@ -28,9 +28,11 @@ interface YandeRePost {
 export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
   public readonly name: 'yandere' = 'yandere';
   private timeout: number;
+  private retries: number;
 
-  constructor(public ctx: Context, public config: YandeReConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
+  constructor(public ctx: Context, public config: YandeReConfig.Config, public debugConfig: DebugConfig, requestTimeout: number, enhancerRetryCount: number) {
       this.timeout = requestTimeout * 1000;
+      this.retries = enhancerRetryCount;
   }
 
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -77,12 +79,15 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
 
       if (this.debugConfig.enabled) logger.info(`[yande.re] 正在下载图源图片 (${this.config.postQuality} 质量)... URL: ${downloadUrl}`)
 
-      const imageBuffer = Buffer.from(await this.ctx.http.get(downloadUrl, { responseType: 'arraybuffer', timeout: this.timeout }))
+      const imageBuffer = await downloadWithRetry(this.ctx, downloadUrl, {
+          retries: this.retries,
+          timeout: this.timeout
+      });
       const imageType = getImageTypeFromUrl(downloadUrl)
 
       return { details, imageBuffer, imageType }
     } catch (error) {
-      logger.error(`[yande.re] 获取图源信息 (ID: ${postId}) 时发生错误:`, error)
+      logger.error(`[yande.re] 获取图源信息 (ID: ${postId}) 时发生错误:`, error.message)
       return null
     }
   }
@@ -137,4 +142,4 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE yande.ts ---
+// --- END OF FILE src/enhancers/yande.ts ---

@@ -68,7 +68,6 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
 
   private async parseResults(page: Page): Promise<Searcher.Result[]> {
     const rawResults = await page.$$eval('div.item-box', (boxes: HTMLDivElement[]) => {
-        // 第一个 item-box 是源图，跳过
         return boxes.slice(1).map(box => {
             if (box.querySelector('h5')?.textContent === '広告') return null;
 
@@ -85,7 +84,6 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
             const authorLink = links.find(a => a.href.includes('/users/') || a.href.includes('/i/user/'));
             const mainLink = links.find(a => !a.href.includes('/users/') && !a.href.includes('/i/user/'));
 
-            // 之前获取 searchType 的逻辑比较脆弱，这里简化，因为我们只进行第一步搜索
             const searchType = '色合検索';
             
             return {
@@ -108,3 +106,4 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
     }));
   }
 }
+// --- END OF FILE src/searchers/ascii2d.ts ---

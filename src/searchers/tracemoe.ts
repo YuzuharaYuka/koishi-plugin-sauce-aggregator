@@ -1,4 +1,4 @@
-// --- START OF FILE tracemoe.ts ---
+// --- START OF FILE src/searchers/tracemoe.ts ---
 
 import { Context, Logger } from 'koishi'
 import { Searcher, SearchOptions, TraceMoe as TraceMoeConfig, DebugConfig, SearchEngineName, Config } from '../config'
@@ -103,4 +103,4 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
     }
   }
 }
-// --- END OF FILE tracemoe.ts ---
+// --- END OF FILE src/searchers/tracemoe.ts ---
