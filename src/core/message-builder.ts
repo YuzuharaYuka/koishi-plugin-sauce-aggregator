@@ -5,6 +5,24 @@ import { Config, Enhancer, SearchEngineName, Searcher as SearcherResult } from '
 
 const logger = new Logger('sauce-aggregator:message-builder');
 
+function getEnhancementId(enhancerName: string, result: SearcherResult.Result): string | null {
+    const patterns = {
+        pixiv: /illust_id=(\d+)|artworks\/(\d+)/,
+        danbooru: /posts\/(\d+)/,
+        gelbooru: /id=(\d+)|md5=([a-f0-9]{32})/,
+        yandere: /post\/show\/(\d+)/,
+    };
+    const regex = patterns[enhancerName];
+    if (!regex) return null;
+
+    const match = result.url.match(regex) || result.details?.join(' ').match(regex);
+    if (match) {
+        // Return the first captured group that is not undefined
+        return `${enhancerName}:${match[1] || match[2]}`;
+    }
+    return null;
+}
+
 export async function createResultContent(ctx: Context, result: SearcherResult.Result, engineName?: SearchEngineName): Promise<h[]> {
     const textFields = [
       engineName ? `引擎: ${engineName}` : null,
@@ -45,6 +63,7 @@ export async function buildHighConfidenceMessage(
     result: SearcherResult.Result,
     engineName: SearchEngineName,
     botUser,
+    processedEnhancements: Set<string>,
 ) {
   if (result.coverImage) {
     figureMessage.children.push(h('message', { nickname: '番剧封面', avatar: botUser.avatar }, h.image(result.coverImage)));
@@ -65,16 +84,32 @@ export async function buildHighConfidenceMessage(
   }
   
   for (const enhancer of sortedEnhancers) {
+    const enhancementId = getEnhancementId(enhancer.name, result);
+    if (enhancementId) {
+        if (processedEnhancements.has(enhancementId)) {
+            if (config.debug.enabled) logger.info(`[Enhancer] 跳过重复的图源处理: ${enhancementId}`);
+            continue; // Skip this enhancer as it has been processed
+        }
+    }
+
     try {
       const enhancedData = await enhancer.enhance(result);
       if (enhancedData) {
         if (config.debug.enabled) logger.info(`[${enhancer.name}] 已成功获取图源信息。`);
+        
+        if(enhancementId) processedEnhancements.add(enhancementId);
+
         if (enhancedData.imageBuffer) {
             figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))
         }
         const enhancedDetailsNode = h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details);
         figureMessage.children.push(enhancedDetailsNode);
-        break;
+        
+        if (enhancedData.additionalImages?.length > 0) {
+            figureMessage.children.push(...enhancedData.additionalImages);
+        }
+        
+        break; // Stop after the first successful enhancement
       }
     } catch (e) {
         logger.warn(`[${enhancer.name}] 图源处理时发生错误:`, e);
@@ -92,3 +127,4 @@ export async function sendFigureMessage(session, figureMessage: h, errorMessage:
         }
     }
 }
+// --- END OF FILE src/core/message-builder.ts ---
