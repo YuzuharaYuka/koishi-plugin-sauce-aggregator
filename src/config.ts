@@ -69,6 +69,7 @@ export interface Config {
   maxResults: number
   promptTimeout: number
   requestTimeout: number
+  prependLinkParsingMiddleware: boolean; // <-- 新增此行
   search: SearchConfig 
   puppeteer: PuppeteerConfig
   debug: DebugConfig
@@ -99,6 +100,7 @@ export namespace YandeRe {
   export interface Config {
     postQuality: 'jpeg' | 'sample' | 'original'
     maxRating: 's' | 'q' | 'e'
+    enableLinkParsing: boolean;
   }
 }
 
@@ -107,6 +109,7 @@ export namespace Gelbooru {
         keyPairs: { userId: string; apiKey: string }[]
         postQuality: 'original' | 'sample' | 'preview'
         maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'
+        enableLinkParsing: boolean;
     }
 }
 
@@ -115,6 +118,7 @@ export namespace Danbooru {
         keyPairs: { username: string; apiKey: string }[]
         postQuality: 'original' | 'sample' | 'preview'
         maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'
+        enableLinkParsing: boolean;
     }
 }
 
@@ -138,6 +142,7 @@ export namespace Pixiv {
       clientSecret: string;
       postQuality: 'original' | 'large' | 'medium';
       allowR18: boolean;
+      enableLinkParsing: boolean;
   }
 }
 
@@ -185,6 +190,9 @@ export const Config: Schema<Config> = Schema.object({
   promptTimeout: Schema.number().default(60).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
   requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源。'),
   
+  // --- THIS IS THE NEW OPTION ---
+  prependLinkParsingMiddleware: Schema.boolean().default(false).description('**启用前置中间件模式**<br>开启后，本插件将优先处理消息中的图源链接。'),
+
   search: Schema.object({
     mode: Schema.union([
         Schema.const('sequential').description('串行模式'),
@@ -246,6 +254,7 @@ export const Config: Schema<Config> = Schema.object({
         Schema.const('q').description('可疑'),
         Schema.const('e').description('露骨'),
     ]).default('s').description('允许的最高内容评级。'),
+    enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Yande.re 帖子链接时，自动获取并发送图源详情。'),
   }).description('Yande.re 图源设置'),
   
   gelbooru: Schema.object({
@@ -264,6 +273,7 @@ export const Config: Schema<Config> = Schema.object({
         Schema.const('questionable').description('可疑'),
         Schema.const('explicit').description('露骨'),
     ]).default('general').description('允许的最高内容评级。'),
+    enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Gelbooru 帖子链接时，自动获取并发送图源详情。'),
     }).description('Gelbooru 图源设置'),
 
     danbooru: Schema.object({
@@ -282,6 +292,7 @@ export const Config: Schema<Config> = Schema.object({
             Schema.const('questionable').description('可疑 (q)'),
             Schema.const('explicit').description('露骨 (e)'),
         ]).default('general').description('允许的最高内容评级。'),
+        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Danbooru 帖子链接时，自动获取并发送图源详情。'),
     }).description('Danbooru 图源设置'),
 
     pixiv: Schema.object({
@@ -294,6 +305,7 @@ export const Config: Schema<Config> = Schema.object({
         allowR18: Schema.boolean().default(false).description('是否允许发送 R-18/R-18G 内容。'),
         clientId: Schema.string().role('secret').description('Pixiv API Client ID.').default('MOBrBDS8blbauoSck0ZfDbtuzpyT'),
         clientSecret: Schema.string().role('secret').description('Pixiv API Client Secret.').default('lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj'),
+        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Pixiv 作品链接时，自动获取并发送图源详情。'),
     }).description('Pixiv 图源设置'),
 
     debug: Schema.object({

@@ -1,6 +1,6 @@
 // --- START OF FILE src/index.ts ---
 import { Context, Logger, h } from 'koishi'
-import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName } from './config'
+import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName, Searcher as SearcherResult } from './config'
 import { SauceNAO } from './searchers/saucenao'
 import { TraceMoe } from './searchers/tracemoe'
 import { IQDB } from './searchers/iqdb'
@@ -14,7 +14,7 @@ import { DanbooruEnhancer } from './enhancers/danbooru'
 import { PixivEnhancer } from './enhancers/pixiv'
 import { PuppeteerManager } from './puppeteer'
 import { SearchHandler } from './core/search-handler'
-import { getImageUrlAndName, preprocessImage, detectImageType } from './utils'
+import { getImageUrlAndName, preprocessImage, detectImageType, extractPlainText } from './utils'
 
 export const name = 'sauce-aggregator'
 export const using = ['http']
@@ -97,9 +97,6 @@ export function apply(ctx: Context, config: Config) {
     .filter(item => item.enabled && allSearchers[item.engine])
     .map(item => allSearchers[item.engine]);
 
-  const sequentialSearchers = allEnabledSearchers
-    .filter(searcher => searcher.name !== 'yandex' && searcher.name !== 'ascii2d');
-  
   const allEnhancers: Record<string, Enhancer> = {};
 
   const enhancerRegistry = {
@@ -141,7 +138,6 @@ export function apply(ctx: Context, config: Config) {
 
   const searchHandler = new SearchHandler(ctx, config, allSearchers, allEnabledSearchers);
 
-
   ctx.command('sauce [...text:string]', '聚合搜图')
     .alias('soutu','搜图')
     .option('all', '-a, --all 返回所有启用的引擎搜索结果')
@@ -151,7 +147,7 @@ export function apply(ctx: Context, config: Config) {
             const text = inputText || '';
             const words = text.split(/\s+/).filter(Boolean);
       
-            let searchersToUse: Searcher[] = allEnabledSearchers; 
+            let searchersToUse: Searcher[] = allEnabledSearchers;
             let imageInput: string = text;
             let isSingleEngineSpecified = false;
       
@@ -228,7 +224,6 @@ export function apply(ctx: Context, config: Config) {
           const collectedErrors: string[] = [];
   
           if (isSingleEngineSpecified || options.all) {
-              // --- THIS IS THE FIX ---: Pass `sortedEnhancers` to handleDirectSearch
               return await searchHandler.handleDirectSearch(searchersToUse, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
           } else {
               if (config.search.mode === 'parallel') {
@@ -245,5 +240,61 @@ export function apply(ctx: Context, config: Config) {
           return '图片处理失败，请检查链接或网络。';
         }
     });
-} 
+
+  const linkParsingRegistry = [
+    { name: 'pixiv', regex: /(www\.pixiv\.net\/(en\/)?artworks\/\d+|i\.pximg\.net)/, enhancer: allEnhancers.pixiv, config: config.pixiv },
+    { name: 'danbooru', regex: /danbooru\.donmai\.us\/(posts|post\/show)\/\d+/, enhancer: allEnhancers.danbooru, config: config.danbooru },
+    { name: 'gelbooru', regex: /gelbooru\.com\/index\.php\?.*id=\d+/, enhancer: allEnhancers.gelbooru, config: config.gelbooru },
+    { name: 'yandere', regex: /yande\.re\/post\/show\/\d+/, enhancer: allEnhancers.yandere, config: config.yandere },
+  ];
+
+  ctx.middleware(async (session, next) => {
+    const plainText = extractPlainText(session.elements);
+    const urls = plainText.match(/https?:\/\/[^\s]+/g);
+    if (!urls) return next();
+    
+    if (plainText.toLowerCase().startsWith('sauce') || plainText.toLowerCase().startsWith('搜图')) {
+        return next();
+    }
+
+    for (const url of urls) {
+      for (const service of linkParsingRegistry) {
+        if (service.enhancer && service.config.enableLinkParsing && service.regex.test(url)) {
+          if (config.debug.enabled) logger.info(`[${service.name}] 检测到链接，开始自动解析: ${url}`);
+          
+          try {
+            const dummyResult: SearcherResult.Result = {
+              url,
+              similarity: 100,
+              thumbnail: '',
+              source: '链接解析',
+            };
+
+            const enhancedData = await service.enhancer.enhance(dummyResult);
+
+            if (enhancedData) {
+              const botUser = await session.bot.getSelf();
+              const figureMessage = h('figure');
+              
+              if (enhancedData.imageBuffer) {
+                figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))
+              }
+              const enhancedDetailsNode = h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details);
+              figureMessage.children.push(enhancedDetailsNode);
+              
+              await session.send(figureMessage);
+              
+              return; 
+            }
+          } catch (e) {
+            logger.warn(`[${service.name}] 链接解析失败 (URL: ${url}):`, e.message);
+          }
+          break;
+        }
+      }
+    }
+    
+    return next();
+  }, config.prependLinkParsingMiddleware); // <-- The logic is applied here
+}
 // --- END OF FILE src/index.ts ---

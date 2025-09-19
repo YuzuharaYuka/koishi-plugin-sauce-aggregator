@@ -13,7 +13,7 @@ export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
  * @param elements The message elements array.
  * @returns The concatenated, unescaped plain text.
  */
-function extractPlainText(elements: h[]): string {
+export function extractPlainText(elements: h[]): string {
     if (!elements) return '';
     return h.select(elements, 'text').map(e => e.attrs.content).join('').trim();
 }
