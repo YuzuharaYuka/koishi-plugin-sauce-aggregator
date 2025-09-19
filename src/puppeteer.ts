@@ -17,7 +17,7 @@ export class PuppeteerManager {
     private ctx: Context;
     private config: Config;
     private _isInitialized = false;
-    private _closeTimer: NodeJS.Timeout | null = null; // --- THIS IS THE FIX ---: Timer for auto-closing
+    private _closeTimer: NodeJS.Timeout | null = null;
 
     constructor(ctx: Context, config: Config) {
         this.ctx = ctx;
@@ -25,7 +25,6 @@ export class PuppeteerManager {
     }
 
     public async initialize(): Promise<void> {
-        // --- THIS IS THE FIX ---: Only initialize in persistent mode
         if (this._isInitialized || !this.config.puppeteer.persistentBrowser) return;
 
         logger.info('[Stealth] 正在预初始化常驻浏览器实例...');
@@ -83,7 +82,6 @@ export class PuppeteerManager {
     }
 
     private getBrowser(): Promise<Browser> {
-        // --- THIS IS THE FIX ---: Cancel any pending auto-close timer on access
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
@@ -111,12 +109,10 @@ export class PuppeteerManager {
         return this._browserPromise;
     }
     
-    // --- THIS IS THE FIX ---: New method to schedule browser closing
     private async scheduleClose() {
         if (this.config.puppeteer.persistentBrowser || this._closeTimer) return;
 
         const browser = await this.getBrowser();
-        // The first page is always about:blank, so we check if there are more than 1 pages.
         if ((await browser.pages()).length > 1) {
             if (this.config.debug.enabled) logger.info(`[Stealth] [按需模式] 仍有 ${(await browser.pages()).length - 1} 个活动页面，暂不关闭。`);
             return;
@@ -143,7 +139,6 @@ export class PuppeteerManager {
         page.setDefaultTimeout(this.config.requestTimeout * 1000);
         await page.setBypassCSP(true);
         
-        // --- THIS IS THE FIX ---: Attach a listener to schedule closing when a page closes
         if (!this.config.puppeteer.persistentBrowser) {
             page.on('close', () => this.scheduleClose());
         }
@@ -172,7 +167,6 @@ export class PuppeteerManager {
     }
 
     public async dispose() {
-        // --- THIS IS THE FIX ---: Ensure timer is cleared on manual dispose
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
