@@ -80,28 +80,31 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
 
       if (this.debugConfig.enabled) logger.info(`[iqdb] 收到响应页面，长度: ${html.length}`)
       if (this.debugConfig.logApiResponses.includes(this.name)) {
-        logger.info(`[iqdb] Raw HTML: ${html.substring(0, 2000)}...`);
+        // --- THIS IS THE FIX ---: Log as a structured object for better console output.
+        logger.info({ '[iqdb] Raw HTML Response': html });
       }
       
       if (html.includes('File is too large')) throw new Error('图片体积过大 (超过 8MB 限制)。');
       if (html.includes('You are searching too much.')) throw new Error('搜索过于频繁，请稍后再试。');
-      if (html.includes('high load') || html.includes('query has been queued')) {
-          throw new Error('服务器当前负载过高，请求已被置于队列中，请稍后再试。');
-      }
+      
+      // --- THIS IS THE FIX ---: Removed the faulty error check.
+      // The "high load" or "queued" messages can now appear on successful result pages,
+      // so checking for them is no longer a reliable way to detect errors.
+      // We will now rely on the absence of result elements instead.
+      
       if (html.includes("Can't read query result")) {
           throw new Error('服务器未能读取查询结果，可能是临时性问题，请稍后重试。');
       }
 
       const $ = cheerio.load(html)
       const results: Searcher.Result[] = []
-      const resultElements = $('#pages > div, #more1 > .pages > div')
+      const resultElements = $('.pages > div')
 
       if (resultElements.length === 0) {
         if (html.includes('No relevant results found')) return []
         
         if (this.debugConfig.enabled) {
           logger.warn('[iqdb] 页面结构可能已更改，未找到结果容器。')
-          logger.info(`[iqdb] Raw HTML for debugging:\n${html}`);
         }
         return []
       }
@@ -109,6 +112,7 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
       resultElements.each((_, element) => {
         try {
           const $div = $(element)
+          // Skip the "Your image" block which has no 'th' for match type
           if ($div.find('th').length === 0) return
 
           const similarityMatch = $div.find('tr:last-child td').text().match(/(\d+\.?\d*)% similarity/)
@@ -158,12 +162,9 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
       
       return results.filter(r => r.thumbnail && r.url)
     } catch (error) {
-      // --- THIS IS THE FIX ---
-      // Intercept the timeout error and provide a more user-friendly message.
       if (error.code === 'ETIMEDOUT' || /timeout/i.test(error.message)) {
           throw new Error('请求超时。IQDB 服务器可能正处于高负载状态，请稍后重试。');
       }
-      // --- END OF FIX ---
       
       logger.warn(`[iqdb] 请求出错: ${error.message}`)
       if (this.debugConfig.enabled && error.response) {
@@ -174,5 +175,3 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
     }
   }
 }
-
-// --- END OF FILE src/searchers/iqdb.ts ---
