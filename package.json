@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-sauce-aggregator",
-  "description": "聚合以图搜图。目前支持6个常用搜图引擎搜索，4个图源获取原图。添加图源链接解析功能",
-  "version": "1.7.1",
+  "description": "聚合以图搜图。支持6个常用搜图引擎搜索，4个图源获取原图以及链接解析。小优化",
+  "version": "1.7.2",
   "homepage": "https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator",
   "repository": {
     "type": "git",
