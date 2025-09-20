@@ -1,5 +1,3 @@
-// --- START OF FILE src/core/search-handler.ts ---
-
 import { Context, h, Logger, Session } from 'koishi';
 import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer } from '../config';
 import * as MessageBuilder from './message-builder';
@@ -73,7 +71,6 @@ export class SearchHandler {
         const puppeteerTasks: Promise<SearchOutput>[] = [];
 
         for (const searcher of searchers) {
-            // The task is the async function that performs the search
             const task = () => this.performSearch(searcher, options);
             
             if (PUPPETEER_ENGINES.includes(searcher.name)) {
@@ -246,6 +243,7 @@ export class SearchHandler {
     public async handleParallelSearch(searchers: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
         let highConfidenceSent = false;
         const processedEnhancements = new Set<string>();
+        const lowConfidenceOutputs: SearchOutput[] = [];
     
         const attachEngines: Searcher[] = [];
         const mainSearchers: Searcher[] = [];
@@ -257,15 +255,15 @@ export class SearchHandler {
                 mainSearchers.push(s);
             }
         });
-
+    
         const attachPromise = this.handleAttachEngines(attachEngines, options, botUser, session, collectedErrors);
-        const mainOutputs = await this.executeSearch(mainSearchers, options);
-        mainOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
-        
-        const successfulOutputs = mainOutputs.filter(o => o.results.length > 0);
-
-        const handleHighConfidence = async (output: SearchOutput) => {
-            if (this.config.search.parallelHighConfidenceStrategy === 'first' && highConfidenceSent) {
+    
+        const processSearchResult = async (output: SearchOutput) => {
+            if (output.error) {
+                collectedErrors.push(output.error);
+                return;
+            }
+            if (output.results.length === 0) {
                 return;
             }
     
@@ -275,37 +273,61 @@ export class SearchHandler {
             const highConfidenceResults = output.results.filter(r => r.similarity >= thresholdToUse);
     
             if (highConfidenceResults.length > 0) {
-                if (this.config.search.parallelHighConfidenceStrategy === 'first' && highConfidenceSent) return;
-                
-                highConfidenceSent = true;
-                let resultsToShow = [highConfidenceResults[0]];
-                if (output.engine === 'soutubot') {
-                    resultsToShow = highConfidenceResults.slice(0, this.config.soutubot.maxHighConfidenceResults);
+                if (this.config.search.parallelHighConfidenceStrategy === 'first' && highConfidenceSent) {
+                    return;
                 }
-                
-                await session.send(`[${output.engine}] 找到高匹配度结果:`);
-                const figureMessage = h('figure');
-                for (const result of resultsToShow) {
-                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, output.engine, botUser, processedEnhancements);
+    
+                if (!highConfidenceSent || this.config.search.parallelHighConfidenceStrategy === 'all') {
+                    highConfidenceSent = true;
+    
+                    let resultsToShow = [highConfidenceResults[0]];
+                    if (output.engine === 'soutubot') {
+                        resultsToShow = highConfidenceResults.slice(0, this.config.soutubot.maxHighConfidenceResults);
+                    }
+                    
+                    await session.send(`[${output.engine}] 找到高匹配度结果:`);
+                    const figureMessage = h('figure');
+                    for (const result of resultsToShow) {
+                        await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, output.engine, botUser, processedEnhancements);
+                    }
+                    await MessageBuilder.sendFigureMessage(session, figureMessage, `[${output.engine}] 发送高匹配度结果失败`);
                 }
-                await MessageBuilder.sendFigureMessage(session, figureMessage, `[${output.engine}] 发送高匹配度结果失败`);
+            } else {
+                lowConfidenceOutputs.push(output);
             }
         };
 
-        for(const output of successfulOutputs) {
-            await handleHighConfidence(output);
-            if (highConfidenceSent && this.config.search.parallelHighConfidenceStrategy === 'first') break;
-        }
+        const apiProcessingPromises: Promise<void>[] = [];
+        const puppeteerProcessingPromises: Promise<void>[] = [];
+        
+        mainSearchers.forEach(searcher => {
+            const task = async () => {
+                const output = await this.performSearch(searcher, options);
+                await processSearchResult(output);
+            };
+
+            if (PUPPETEER_ENGINES.includes(searcher.name)) {
+                if (this.config.debug.enabled) logger.info(`[Handler] Puppeteer 任务 [${searcher.name}] 已加入队列。`);
+                puppeteerProcessingPromises.push(this.puppeteerSemaphore.run(task));
+            } else {
+                apiProcessingPromises.push(task());
+            }
+        });
+
+        await Promise.all([...apiProcessingPromises, ...puppeteerProcessingPromises]);
     
         await attachPromise;
     
         if (!highConfidenceSent) {
+            const successfulOutputs = lowConfidenceOutputs.filter(o => o.results.length > 0);
+    
             if (successfulOutputs.length === 0) {
                 let finalMessage = '未找到任何相关结果。';
                 if (collectedErrors.length > 0) {
                     finalMessage += '\n\n遇到的问题:\n' + collectedErrors.join('\n');
                 }
-                return session.send(finalMessage);
+                await session.send(finalMessage);
+                return;
             }
     
             await session.send('未找到高匹配度结果，显示如下:');
@@ -324,4 +346,3 @@ export class SearchHandler {
         }
     }
 }
-// --- END OF FILE src/core/search-handler.ts ---
