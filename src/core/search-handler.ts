@@ -3,18 +3,25 @@
 import { Context, h, Logger, Session } from 'koishi';
 import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer } from '../config';
 import * as MessageBuilder from './message-builder';
+import { Semaphore } from './semaphore';
 
 const logger = new Logger('sauce-aggregator:handler');
 
 type SearchOutput = { engine: SearchEngineName; results: SearcherResult.Result[]; error: string | null };
 
+const PUPPETEER_ENGINES: SearchEngineName[] = ['yandex', 'soutubot', 'ascii2d'];
+
 export class SearchHandler {
+    private puppeteerSemaphore: Semaphore;
+
     constructor(
         private ctx: Context,
         private config: Config,
         private allSearchers: Record<string, Searcher>,
         private allEnabledSearchers: Searcher[],
-    ) {}
+    ) {
+        this.puppeteerSemaphore = new Semaphore(config.puppeteer.concurrency);
+    }
 
     private async performSearch(searcher: Searcher, options: SearchOptions): Promise<SearchOutput> {
         try {
@@ -30,11 +37,20 @@ export class SearchHandler {
     private async handleAttachEngines(attachEngines: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[]) {
         if (attachEngines.length === 0) return;
 
-        const attachOutputs = await Promise.all(attachEngines.map(s => this.performSearch(s, options)));
+        const attachPromises = attachEngines.map(s => {
+            if (PUPPETEER_ENGINES.includes(s.name)) {
+                if (this.config.debug.enabled) logger.info(`[Handler] 附加任务 [${s.name}] 已加入 Puppeteer 队列。`);
+                return this.puppeteerSemaphore.run(() => this.performSearch(s, options));
+            }
+            return this.performSearch(s, options);
+        });
+
+        const attachOutputs = await Promise.all(attachPromises);
         const successfulAttachOutputs = attachOutputs.filter(o => o.results.length > 0);
         
+        attachOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
+        
         if (successfulAttachOutputs.length === 0) {
-            attachOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
             return;
         }
 
@@ -52,12 +68,29 @@ export class SearchHandler {
         }
     }
 
+    private async executeSearch(searchers: Searcher[], options: SearchOptions): Promise<SearchOutput[]> {
+        const apiTasks: Promise<SearchOutput>[] = [];
+        const puppeteerTasks: Promise<SearchOutput>[] = [];
+
+        for (const searcher of searchers) {
+            // The task is the async function that performs the search
+            const task = () => this.performSearch(searcher, options);
+            
+            if (PUPPETEER_ENGINES.includes(searcher.name)) {
+                if (this.config.debug.enabled) logger.info(`[Handler] Puppeteer 任务 [${searcher.name}] 已加入队列。`);
+                puppeteerTasks.push(this.puppeteerSemaphore.run(task));
+            } else {
+                apiTasks.push(task());
+            }
+        }
+
+        const allPromises = [...apiTasks, ...puppeteerTasks];
+        return Promise.all(allPromises);
+    }
+
     public async handleDirectSearch(mainSearchers: Searcher[], attachSearchers: Searcher[], isSingleEngineSearch: boolean, options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
-        const mainOutputs = await Promise.all(mainSearchers.map(async s => {
-            const output = await this.performSearch(s, options);
-            if (output.error) collectedErrors.push(output.error);
-            return output;
-        }));
+        const mainOutputs = await this.executeSearch(mainSearchers, options);
+        mainOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
 
         const highConfidenceGroups: { engine: SearchEngineName; results: SearcherResult.Result[] }[] = [];
         const lowConfidenceGroups: { engine: SearchEngineName; results: SearcherResult.Result[] }[] = [];
@@ -93,7 +126,7 @@ export class SearchHandler {
                 let resultsToShow = group.results;
                 if (group.engine === 'soutubot') {
                     resultsToShow = group.results.slice(0, this.config.soutubot.maxHighConfidenceResults);
-                } else if (!isSingleEngineSearch) { // In --all mode, show only the best for non-soutubot
+                } else if (!isSingleEngineSearch) {
                     resultsToShow = [group.results[0]];
                 }
                 for (const result of resultsToShow) {
@@ -177,9 +210,9 @@ export class SearchHandler {
             return;
         }
         
-        const allLowConfidenceSearchers = this.allEnabledSearchers.filter(s => !executedEngineNames.has(s.name));
-        if (allLowConfidenceSearchers.length > 0) {
-            const unexecutedOutputs = await Promise.all(allLowConfidenceSearchers.map(s => this.performSearch(s, options)));
+        const remainingSearchers = this.allEnabledSearchers.filter(s => !executedEngineNames.has(s.name));
+        if (remainingSearchers.length > 0) {
+            const unexecutedOutputs = await this.executeSearch(remainingSearchers, options);
             unexecutedOutputs.forEach(output => {
                 if (output.error) collectedErrors.push(output.error);
                 if (output.results.length > 0) executedOutputs.push(output);
@@ -212,7 +245,6 @@ export class SearchHandler {
     
     public async handleParallelSearch(searchers: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
         let highConfidenceSent = false;
-        const allOutputs: SearchOutput[] = [];
         const processedEnhancements = new Set<string>();
     
         const attachEngines: Searcher[] = [];
@@ -225,7 +257,13 @@ export class SearchHandler {
                 mainSearchers.push(s);
             }
         });
-    
+
+        const attachPromise = this.handleAttachEngines(attachEngines, options, botUser, session, collectedErrors);
+        const mainOutputs = await this.executeSearch(mainSearchers, options);
+        mainOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
+        
+        const successfulOutputs = mainOutputs.filter(o => o.results.length > 0);
+
         const handleHighConfidence = async (output: SearchOutput) => {
             if (this.config.search.parallelHighConfidenceStrategy === 'first' && highConfidenceSent) {
                 return;
@@ -253,22 +291,15 @@ export class SearchHandler {
                 await MessageBuilder.sendFigureMessage(session, figureMessage, `[${output.engine}] 发送高匹配度结果失败`);
             }
         };
+
+        for(const output of successfulOutputs) {
+            await handleHighConfidence(output);
+            if (highConfidenceSent && this.config.search.parallelHighConfidenceStrategy === 'first') break;
+        }
     
-        const attachPromise = this.handleAttachEngines(attachEngines, options, botUser, session, collectedErrors);
-    
-        const searchPromises = mainSearchers.map(async (searcher) => {
-            const output = await this.performSearch(searcher, options);
-            allOutputs.push(output);
-            if (output.error) collectedErrors.push(output.error);
-            if (output.results.length > 0) {
-                await handleHighConfidence(output);
-            }
-        });
-    
-        await Promise.all([...searchPromises, attachPromise]);
+        await attachPromise;
     
         if (!highConfidenceSent) {
-            const successfulOutputs = allOutputs.filter(o => o.results.length > 0);
             if (successfulOutputs.length === 0) {
                 let finalMessage = '未找到任何相关结果。';
                 if (collectedErrors.length > 0) {
@@ -291,10 +322,6 @@ export class SearchHandler {
         if (collectedErrors.length > 0 && !highConfidenceSent) {
             await session.send('部分引擎搜索失败:\n' + collectedErrors.join('\n'));
         }
-    }
-
-    private async attachAdditionalResults(options: SearchOptions, botUser, session, collectedErrors: string[], executedOutputs: SearchOutput[], figureMessage: h | null) {
-        // This method is now obsolete and can be removed
     }
 }
 // --- END OF FILE src/core/search-handler.ts ---

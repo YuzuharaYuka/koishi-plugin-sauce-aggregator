@@ -43,6 +43,7 @@ export interface PuppeteerConfig {
   browserCloseTimeout: number
   browserLaunchTimeout: number
   chromeExecutablePath: string
+  concurrency: number;
 }
 
 export interface SearchConfig {
@@ -150,8 +151,9 @@ export namespace Pixiv {
 }
 
 const puppeteerConfig = Schema.object({
-    persistentBrowser: Schema.boolean().default(true).description('**常驻浏览器**<br>开启后，浏览器将在插件启动时预加载并常驻后台，响应速度最快，但会持续占用资源。<br>关闭后，浏览器将按需启动，并在空闲后自动关闭以节省资源。'),
-    browserCloseTimeout: Schema.number().default(30).min(0).description('**自动关闭延迟 (秒)**<br>仅在**关闭** `常驻浏览器实例` 时生效。设置搜索任务结束后，等待多少秒关闭浏览器实例。'),
+    persistentBrowser: Schema.boolean().default(false).description('**常驻浏览器**<br>开启后，浏览器将在插件启动时预加载并常驻，加快后续搜索响应速度，但会占用后台资源。'),
+    concurrency: Schema.number().min(1).max(3).default(1).description('**浏览器并发任务数**<br>同时执行浏览器任务的最大数量。提高此值会增加浏览器资源占用，可能导致任务超时失败，建议设为 1。'),
+    browserCloseTimeout: Schema.number().default(30).min(0).description('**自动关闭延迟 (秒)**<br>仅在关闭 `常驻浏览器实例` 时生效。设置搜索任务结束后，等待多少秒关闭浏览器。'),
     browserLaunchTimeout: Schema.number().default(90).min(10).description('**浏览器启动超时 (秒)**<br>等待浏览器进程启动并准备就绪的最长时间。'),
     chromeExecutablePath: Schema.string().description(
       '**本地浏览器可执行文件路径 (可选)**<br>' +
@@ -173,7 +175,7 @@ export const Config: Schema<Config> = Schema.object({
       { engine: 'ascii2d', enabled: true },
       { engine: 'yandex', enabled: true },
     ])
-    .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all）。\nYandex 和 Ascii2D 建议作为附加结果使用。'),
+    .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all或并行搜索）。\n\n\`Yandex\` 和 \`Ascii2D\` 仅作为附加结果使用。'),
 
   enhancerOrder: Schema.array(Schema.object({
     engine: Schema.union(['gelbooru', 'yandere', 'danbooru', 'pixiv']).description('图源'),
@@ -189,12 +191,12 @@ export const Config: Schema<Config> = Schema.object({
     .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按顺序尝试获取更详细信息。'),
   
   confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值 (%)。当引擎未设置独立阈值时，将使用此值。'),
-  maxResults: Schema.number().default(2).min(1).max(5).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
-  promptTimeout: Schema.number().default(60).min(5).max(300).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
+  maxResults: Schema.number().default(2).min(1).max(10).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
+  promptTimeout: Schema.number().default(60).min(10).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
   requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源。'),
   
-  prependLinkParsingMiddleware: Schema.boolean().default(false).description('**启用前置中间件模式**<br>开启后，本插件将优先处理消息中的图源链接。<br>**注意**：这可能会阻止其他链接解析插件生效，请按需开启。'),
-  enhancerRetryCount: Schema.number().min(0).max(5).default(1).description('图源下载重试次数。当从图源网站（如Pixiv）下载图片失败时，额外尝试的次数。'),
+  prependLinkParsingMiddleware: Schema.boolean().default(false).description('**启用前置中间件模式**<br>开启后，本插件将优先处理消息中的图源链接。<br>**注意**：这可能会阻止其他相同链接解析插件生效，请按需开启。'),
+  enhancerRetryCount: Schema.number().min(0).max(5).default(1).description('图源下载重试次数。当从图源网站下载图片失败时，额外尝试的次数。'),
 
   search: Schema.object({
     mode: Schema.union([
@@ -235,7 +237,7 @@ export const Config: Schema<Config> = Schema.object({
   }).description('搜图bot酱 设置'),
   
   yandex: Schema.object({
-    alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Yandex\`的结果。<br>在并行模式下，此结果将作为独立消息稍后发送，以免拖慢高置信度结果的响应。'),
+    alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Yandex\`结果。<br>在并行模式下，此结果将作为独立消息稍后发送。'),
     domain: Schema.union([
       Schema.const('ya.ru').description('ya.ru (推荐)'),
       Schema.const('yandex.com').description('yandex.com'),
@@ -243,7 +245,7 @@ export const Config: Schema<Config> = Schema.object({
   }).description('Yandex 设置'),
 
   ascii2d: Schema.object({
-      alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Ascii2D\`的结果。<br>在并行模式下，此结果将作为独立消息稍后发送，以免拖慢高置信度结果的响应。'),
+      alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Ascii2D\`结果。<br>在并行模式下，此结果将作为独立消息稍后发送。'),
   }).description('Ascii2D 设置'),
   
   yandere: Schema.object({
@@ -257,7 +259,7 @@ export const Config: Schema<Config> = Schema.object({
         Schema.const('q').description('可疑'),
         Schema.const('e').description('露骨'),
     ]).default('s').description('允许的最高内容评级。'),
-    enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Yande.re 帖子链接时，自动获取并发送图源详情。'),
+    enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Yande.re\` 帖子链接时，自动获取并发送图源详情。'),
   }).description('Yande.re 图源设置'),
   
   gelbooru: Schema.object({
@@ -276,7 +278,7 @@ export const Config: Schema<Config> = Schema.object({
         Schema.const('questionable').description('可疑'),
         Schema.const('explicit').description('露骨'),
     ]).default('general').description('允许的最高内容评级。'),
-    enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Gelbooru 帖子链接时，自动获取并发送图源详情。'),
+    enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Gelbooru\` 帖子链接时，自动获取并发送图源详情。'),
     }).description('Gelbooru 图源设置'),
 
     danbooru: Schema.object({
@@ -295,7 +297,7 @@ export const Config: Schema<Config> = Schema.object({
             Schema.const('questionable').description('可疑 (q)'),
             Schema.const('explicit').description('露骨 (e)'),
         ]).default('general').description('允许的最高内容评级。'),
-        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Danbooru 帖子链接时，自动获取并发送图源详情。'),
+        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Danbooru\` 帖子链接时，自动获取并发送图源详情。'),
     }).description('Danbooru 图源设置'),
 
     pixiv: Schema.object({
@@ -308,8 +310,8 @@ export const Config: Schema<Config> = Schema.object({
         allowR18: Schema.boolean().default(false).description('是否允许发送 R-18/R-18G 内容。'),
         clientId: Schema.string().role('secret').description('Pixiv API Client ID.').default('MOBrBDS8blbauoSck0ZfDbtuzpyT'),
         clientSecret: Schema.string().role('secret').description('Pixiv API Client Secret.').default('lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj'),
-        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 Pixiv 作品链接时，自动获取并发送图源详情。'),
-        maxImagesInPost: Schema.number().min(0).max(50).default(10).description('多图作品最大发送数量。当解析一个包含多张图片的作品时，最多发送的数量。设置为 0 则无限制。'),
+        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Pixiv\` 作品链接时，自动获取并发送图源详情。'),
+        maxImagesInPost: Schema.number().min(0).max(50).default(3).description('多图作品最大发送数量。当解析一个包含多张图片的作品时，最多发送的数量。设置为 0 则无限制。'),
     }).description('Pixiv 图源设置'),
 
     debug: Schema.object({
