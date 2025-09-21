@@ -153,7 +153,7 @@ export namespace Pixiv {
 const puppeteerConfig = Schema.object({
     persistentBrowser: Schema.boolean().default(false).description('**常驻浏览器**<br>开启后，浏览器将在插件启动时预加载并常驻，加快后续搜索响应速度，但会占用后台资源。'),
     concurrency: Schema.number().min(1).max(3).default(1).description('**浏览器并发任务数**<br>同时执行浏览器任务的最大数量。提高此值会增加浏览器资源占用，可能导致任务超时失败，建议设为 1。'),
-    browserCloseTimeout: Schema.number().default(30).min(0).description('**自动关闭延迟 (秒)**<br>仅在关闭 `常驻浏览器实例` 时生效。设置搜索任务结束后，等待多少秒关闭浏览器。'),
+    browserCloseTimeout: Schema.number().default(30).min(0).description('**自动关闭延迟 (秒)**<br>仅在关闭 `常驻浏览器` 时生效。设置搜索任务结束后，等待多少秒关闭浏览器。'),
     browserLaunchTimeout: Schema.number().default(90).min(10).description('**浏览器启动超时 (秒)**<br>等待浏览器进程启动并准备就绪的最长时间。'),
     chromeExecutablePath: Schema.string().description(
       '**本地浏览器可执行文件路径 (可选)**<br>' +
