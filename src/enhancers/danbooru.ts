@@ -21,6 +21,7 @@ interface DanbooruPost {
   tag_string_artist: string;
   tag_string_character: string;
   tag_string_copyright: string;
+  tag_string_meta?: string; // Add optional meta tag string
   file_ext: string;
   file_size: number;
   fav_count: number;
@@ -59,20 +60,40 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       
       const keyPair = this.config.keyPairs[Math.floor(Math.random() * this.config.keyPairs.length)];
       const apiBaseUrl = `https://danbooru.donmai.us/posts/${postId}.json`;
-      const apiUrl = `${apiBaseUrl}?login=${keyPair.username}&api_key=${keyPair.apiKey}`;
+      const apiUrl = (keyPair && keyPair.username && keyPair.apiKey)
+        ? `${apiBaseUrl}?login=${keyPair.username}&api_key=${keyPair.apiKey}` 
+        : apiBaseUrl;
 
       if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在通过页面内 fetch 获取 API: ${apiBaseUrl}`);
       
-      await page.goto('https://danbooru.donmai.us/posts', { waitUntil: 'domcontentloaded' });
+      // Go to a neutral page first to establish context
+      await page.goto('https://danbooru.donmai.us', { waitUntil: 'domcontentloaded' });
       
-      const jsonContent = await page.evaluate(url => 
-        fetch(url).then(res => {
-          if (!res.ok) throw new Error(`API Request failed with status ${res.status}`);
-          return res.text();
-        }), 
-      apiUrl);
+      const jsonContent = await page.evaluate(async (url) => {
+        try {
+            const res = await fetch(url);
+            if (!res.ok) {
+              if (res.headers.get('Content-Type')?.includes('text/html')) {
+                  const text = await res.text();
+                  if (/Verifying you are human|cdn-cgi\/challenge-platform/i.test(text)) {
+                      return JSON.stringify({ isCloudflare: true });
+                  }
+              }
+              throw new Error(`API Request failed with status ${res.status}`);
+            }
+            return await res.text();
+        } catch (e) {
+            throw new Error(`Fetch failed: ${e.message}`);
+        }
+      }, apiUrl);
 
-      post = JSON.parse(jsonContent) as DanbooruPost;
+      const responseData = JSON.parse(jsonContent);
+
+      if (responseData.isCloudflare) {
+          throw new Error('检测到 Cloudflare 人机验证页面。这通常由您的网络环境或代理 IP 引起。请尝试更换网络环境或暂时禁用此图源。');
+      }
+      
+      post = responseData as DanbooruPost;
 
       if (this.debugConfig.logApiResponses.includes(this.name)) {
         logger.info(`[danbooru] API 响应: ${JSON.stringify(post, null, 2)}`);
@@ -146,8 +167,11 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       return { details, imageBuffer, imageType };
       
     } catch (error) {
+      if (error.message.includes('Cloudflare')) {
+        throw error;
+      }
       logger.error(`[danbooru] [Stealth] 处理过程中发生错误 (ID: ${postId}):`, error);
-      if (this.debugConfig.enabled) {
+      if (this.debugConfig.enabled && !(error.message.includes('Fetch failed'))) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }
       throw new Error(`[danbooru] 处理失败: ${error.message}`);
@@ -161,7 +185,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     if (result.url && urlRegex.test(result.url)) return result.url;
     if (result.details) {
       for (const detail of result.details) {
-        const match = detail.match(urlRegex);
+        const match = String(detail).match(urlRegex);
         if (match) return match[0];
       }
     }
@@ -175,10 +199,11 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
   
   private buildDetailNodes(post: DanbooruPost): h[] {
     const info: string[] = [];
-    const formatTags = (tagString: string) => tagString.split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean).join(', ');
+    const formatTags = (tagString: string) => (tagString || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean).join(', ');
 
     info.push(`Danbooru (ID: ${post.id})`);
 
+    // Categorized tags
     const artists = formatTags(post.tag_string_artist);
     if (artists) info.push(`作者: ${artists}`);
 
@@ -188,22 +213,36 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     const characters = formatTags(post.tag_string_character);
     if (characters) info.push(`角色: ${characters}`);
 
+    // Post metadata
     info.push(`评分: ${post.score} (收藏: ${post.fav_count})`);
     info.push(`等级: ${post.rating.toUpperCase()}`);
     
-    const postDate = new Date(post.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-    info.push(`发布于: ${postDate}`);
+    if (post.created_at) {
+        const postDate = new Date(post.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+        info.push(`发布于: ${postDate}`);
+    }
 
-    const fileSizeMB = (post.file_size / 1024 / 1024).toFixed(2);
-    info.push(`文件信息: ${post.image_width}x${post.image_height} (${fileSizeMB} MB, ${post.file_ext})`);
+    // File info
+    if (post.file_size > 0) {
+        const fileSizeMB = (post.file_size / 1024 / 1024).toFixed(2);
+        info.push(`文件信息: ${post.image_width}x${post.image_height} (${fileSizeMB} MB, ${post.file_ext})`);
+    } else {
+        info.push(`文件信息: ${post.image_width}x${post.image_height} (${post.file_ext})`);
+    }
     
     if (post.source && post.source.startsWith('http')) {
       info.push(`原始来源: ${post.source}`);
     }
+
+    // --- NEW: Display Meta Tags ---
+    const metaTags = formatTags(post.tag_string_meta);
+    if (metaTags) info.push(`元标签: ${metaTags}`);
     
-    const allTags = post.tag_string_general.split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean);
-    const displayedTags = allTags.slice(0, 25).join(', ');
-    const remainingCount = allTags.length - 25;
+    // General tags
+    const allTags = (post.tag_string_general || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean);
+    const MAX_GENERAL_TAGS = 35; // Increased limit
+    const displayedTags = allTags.slice(0, MAX_GENERAL_TAGS).join(', ');
+    const remainingCount = allTags.length - MAX_GENERAL_TAGS;
     
     let tagsText = `标签: ${displayedTags}`;
     if (remainingCount > 0) {
@@ -214,4 +253,3 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/danbooru.ts ---

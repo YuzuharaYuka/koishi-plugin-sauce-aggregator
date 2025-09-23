@@ -1,5 +1,4 @@
 // --- START OF FILE src/searchers/soutubot.ts ---
-
 import { Context, Logger } from 'koishi'
 import { Searcher, SearchOptions, DebugConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
@@ -32,6 +31,15 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
       const url = `https://soutubot.moe/`
       if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 导航到: ${url}`);
       await page.goto(url, { waitUntil: 'networkidle0' });
+
+      if (await this.puppeteer.checkForCloudflare(page)) {
+          // --- NEW: Conditionally save snapshot on Cloudflare detection ---
+          if (this.debugConfig.enabled && this.debugConfig.logApiResponses.includes(this.name)) {
+              logger.info(`[soutubot] [Debug] 检测到 Cloudflare，正在保存页面快照以供分析...`);
+              await this.puppeteer.saveErrorSnapshot(page, `${this.name}-cloudflare`);
+          }
+          throw new Error('检测到 Cloudflare 人机验证页面。这通常由您的网络环境或代理 IP 引起。请尝试更换网络环境或暂时禁用此引擎。');
+      }
       
       const inputSelector = 'input[type="file"]';
       await page.waitForSelector(inputSelector);
@@ -57,13 +65,15 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
         logger.info({ '[soutubot] Raw HTML Response': html });
       }
       
-      // --- THIS IS THE OPTIMIZATION ---: Determine max number of results needed
       const maxNeeded = Math.max(options.maxResults, this.config.maxHighConfidenceResults || 1);
 
       const results = await this.parseResults(page, maxNeeded);
       return results;
 
     } catch (error) {
+      if (error.message.includes('Cloudflare')) {
+        throw error;
+      }
       logger.error(`[soutubot] [Stealth] 搜索过程中发生错误:`, error);
       if (this.debugConfig.enabled) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
@@ -81,11 +91,9 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
   }
 
   private async parseResults(page: Page, maxNeeded: number): Promise<Searcher.Result[]> {
-    // --- THIS IS THE OPTIMIZATION ---: Pass maxNeeded and slice in the browser.
     const rawResults = await page.$$eval('.card-2', (cards: HTMLDivElement[], maxNeeded) => {
         const langMap = { cn: '中文', jp: '日文', gb: '英文', kr: '韩文' };
         
-        // Process only the top N cards needed, right in the browser.
         return cards.slice(0, maxNeeded).map(card => {
             const similarityLabel = Array.from(card.querySelectorAll('span')).find(el => el.textContent.trim() === '匹配度:');
             const similarityText = similarityLabel ? similarityLabel.nextElementSibling?.textContent.trim().replace('%', '') : '0';
@@ -114,7 +122,7 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
                 imagePageText: imagePageLink?.innerText.trim()
             };
         }).filter(Boolean);
-    }, maxNeeded); // Pass maxNeeded as an argument into page.$$eval
+    }, maxNeeded);
 
     return rawResults.map(res => {
         const details: string[] = [];
@@ -136,4 +144,3 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
     });
   }
 }
-// --- END OF FILE src/searchers/soutubot.ts ---
