@@ -143,9 +143,22 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.command('sauce [...text:string]', '聚合搜图')
     .alias('soutu','搜图')
-    .option('all', '-a, --all 返回所有启用的引擎搜索结果')
+    .option('all', '-a  强制搜索所有已启用的引擎')
+    .usage([
+      '支持多种灵活的搜图方式：',
+      '– 指令后直接跟图片或图片URL',
+      '– 回复一条包含图片的消息',
+      '– 单独发送指令，然后在规定时间内发送图片',
+      '',
+      '可通过指定引擎名或别名来使用特定引擎进行搜索。',
+      '可用引擎 (及其别名):',
+      'saucenao(s), iqdb(i), tracemoe(t), soutubot(b), ascii2d(a), yandex(y)',
+    ].join('\n'))
+    .example('sauce [图片]  (默认模式搜索)')
+    .example('sauce -a [图片]  (搜索所有可用引擎)')
+    .example('sauce saucenao [图片]  (使用 SauceNAO 搜索)')
+    .example('sauce a [图片]  (使用 ascii2d 搜索)')
     .action(async ({ session, options }, text) => {
-
         function parseInput(inputText: string) {
             const text = inputText || '';
             const words = text.split(/\s+/).filter(Boolean);
@@ -323,4 +336,3 @@ export function apply(ctx: Context, config: Config) {
     return next();
   }, config.prependLinkParsingMiddleware);
 }
-// --- END OF FILE src/index.ts ---
