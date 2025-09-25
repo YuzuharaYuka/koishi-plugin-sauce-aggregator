@@ -35,12 +35,12 @@ export const usage = `
 ---
 
 #### 可用引擎 (及其别名):
-*	**[saucenao](https://saucenao.com/) (s)** : 识别动漫、插画和本子图片等。
+*	**[saucenao](https://saucenao.com/) (s)** : 识别动漫、插画和漫画图片等。
 *	**[iqdb](https://www.iqdb.org/) (i)** : 从多个图源网站识别动漫、漫画、游戏图片和壁纸。
-*	**[tracemoe](https://trace.moe/) (t)** : 识别番剧截图，提供标题、集数、时间轴与视频预览。
-*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，使用完整图或局部图识别nh本子，下载可使用[nhentai-downloader](/market?keyword=nhentai-downloader)插件。
+*	**[tracemoe](https://trace.moe/) (t)** : 识别番剧截图，提供番剧信息、集数、时间轴与视频预览。
+*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，使用完整或局部图识别nh本子，下载可使用[nhentai-downloader](/market?keyword=nhentai-downloader)插件。
 *	**[ascii2d](https://ascii2d.net/) (a)** : 二次元画像詳細検索，作为补充结果。
-*	**[yandex](https://ya.ru/) (y)** : 识别网络媒体和网站中存在的相似图片并返回来源，主要作为其他引擎未找到高匹配度结果时的补充。
+*	**[yandex](https://ya.ru/) (y)** : 识别网络媒体或网站中存在的特征相似图片并返回来源，主要作为补充结果。
 
 #### 可用图源
 *	**[yandere](https://yande.re/post)** : 动漫和游戏插画图站，高清壁纸和原画。

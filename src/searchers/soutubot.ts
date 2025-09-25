@@ -29,7 +29,7 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
 
     try {
       const url = `https://soutubot.moe/`
-      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 导航到: ${url}`);
+      if (this.debugConfig.enabled) logger.info(`[soutubot] 导航到: ${url}`);
       await page.goto(url, { waitUntil: 'networkidle0' });
 
       if (await this.puppeteer.checkForCloudflare(page)) {
@@ -48,17 +48,17 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
       await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
       await fs.writeFile(tempFilePath, options.imageBuffer);
       
-      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 正在上传临时文件: ${tempFilePath}`);
+      if (this.debugConfig.enabled) logger.info(`[soutubot] 正在上传临时文件: ${tempFilePath}`);
       await inputUploadHandle.uploadFile(tempFilePath);
       
       const firstResultSelector = '.card-2';
       const noResultSelector = 'div.text-center > h3';
       
-      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 等待搜索结果加载 (等待 '${firstResultSelector}' 或 '${noResultSelector}')...`);
+      if (this.debugConfig.enabled) logger.info(`[soutubot] 等待搜索结果加载...`);
       
       await page.waitForSelector(`${firstResultSelector}, ${noResultSelector}`);
 
-      if (this.debugConfig.enabled) logger.info(`[soutubot] [Stealth] 结果已加载，正在浏览器端解析...`);
+      if (this.debugConfig.enabled) logger.info(`[soutubot] 结果已加载，正在解析...`);
 
       if (this.debugConfig.logApiResponses.includes(this.name)) {
         const html = await page.content();
@@ -74,7 +74,7 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
       if (error.message.includes('Cloudflare')) {
         throw error;
       }
-      logger.error(`[soutubot] [Stealth] 搜索过程中发生错误:`, error);
+      logger.error(`[soutubot] 搜索过程中发生错误:`, error);
       if (this.debugConfig.enabled) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }

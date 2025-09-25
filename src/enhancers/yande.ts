@@ -1,5 +1,4 @@
 // --- START OF FILE src/enhancers/yande.ts ---
-
 import { Context, Logger, h } from 'koishi'
 import { YandeRe as YandeReConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
 import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
@@ -101,7 +100,7 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
 
     if (result.details) {
         for (const detail of result.details) {
-            const match = detail.match(urlRegex);
+            const match = String(detail).match(urlRegex);
             if (match) return match[0];
         }
     }
@@ -142,4 +141,3 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/yande.ts ---

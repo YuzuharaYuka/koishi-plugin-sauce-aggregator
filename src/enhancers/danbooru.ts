@@ -64,7 +64,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
         ? `${apiBaseUrl}?login=${keyPair.username}&api_key=${keyPair.apiKey}` 
         : apiBaseUrl;
 
-      if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在通过页面内 fetch 获取 API: ${apiBaseUrl}`);
+      if (this.debugConfig.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 获取 API: ${apiBaseUrl}`);
       
       // Go to a neutral page first to establish context
       await page.goto('https://danbooru.donmai.us', { waitUntil: 'domcontentloaded' });
@@ -111,7 +111,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       }
 
       if (downloadUrl) {
-        if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
+        if (this.debugConfig.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
         
         const imageBase64 = await page.evaluate(async (url, retries) => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -147,7 +147,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
         }
         
         imageBuffer = Buffer.from(imageBase64, 'base64');
-        if (this.debugConfig.enabled) logger.info(`[danbooru] [Stealth] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
+        if (this.debugConfig.enabled) logger.info(`[danbooru] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
       }
       
       const ratingMap = { g: 'general', s: 'sensitive', q: 'questionable', e: 'explicit' };
@@ -170,7 +170,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       if (error.message.includes('Cloudflare')) {
         throw error;
       }
-      logger.error(`[danbooru] [Stealth] 处理过程中发生错误 (ID: ${postId}):`, error);
+      logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, error);
       if (this.debugConfig.enabled && !(error.message.includes('Fetch failed'))) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }

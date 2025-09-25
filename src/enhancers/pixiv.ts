@@ -260,4 +260,3 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/pixiv.ts ---

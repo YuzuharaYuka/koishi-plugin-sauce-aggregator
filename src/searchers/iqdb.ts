@@ -149,7 +149,7 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
               details,
           })
         } catch (parseError) {
-          if (this.debugConfig.enabled) logger.error('[iqdb] 解析单个结果时出错:', parseError)
+          if (this.debugConfig.enabled) logger.error('[iqdb] 解析结果时出错:', parseError)
         }
       })
       

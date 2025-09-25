@@ -1,5 +1,4 @@
 // --- START OF FILE src/enhancers/gelbooru.ts ---
-
 import { Context, Logger, h } from 'koishi'
 import { Gelbooru as GelbooruConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
 import { USER_AGENT, getImageTypeFromUrl, downloadWithRetry } from '../utils'
@@ -62,8 +61,12 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
       
       const apiParams: Record<string, any> = {
             page: 'dapi', s: 'post', q: 'index', json: '1',
-            api_key: keyPair.apiKey, user_id: keyPair.userId
       };
+
+      if (keyPair && keyPair.apiKey && keyPair.userId) {
+          apiParams.api_key = keyPair.apiKey;
+          apiParams.user_id = keyPair.userId;
+      }
 
       if (postId) {
         apiParams.id = postId;
@@ -138,7 +141,7 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
     if (result.url && urlRegex.test(result.url)) return result.url;
     if (result.details) {
       for (const detail of result.details) {
-        const match = detail.match(urlRegex);
+        const match = String(detail).match(urlRegex);
         if (match) return match[0];
       }
     }
@@ -178,4 +181,3 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/gelbooru.ts ---

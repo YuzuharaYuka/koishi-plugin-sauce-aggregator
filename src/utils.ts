@@ -2,15 +2,15 @@
 import { Buffer } from 'buffer';
 import { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, encodePNGToStream, make } from 'pureimage';
 import { Readable, PassThrough } from 'stream';
-import { Context, Logger, h, Time, sleep } from 'koishi'; // --- THIS IS THE FIX ---: Import sleep
+import { Context, Logger, h } from 'koishi';
 
 const logger = new Logger('sauce-aggregator:utils');
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
 /**
- * Downloads a file with retry logic.
- * @param ctx The context object.
+ * Downloads a file with retry logic using ctx.sleep for safer lifecycle management.
+ * @param ctx The context object, used for http requests and sleep.
  * @param url The URL to download from.
  * @param options Options for the HTTP request and retry logic.
  * @returns A promise that resolves to the downloaded buffer.
@@ -29,8 +29,8 @@ export async function downloadWithRetry(ctx: Context, url: string, options: { re
             lastError = error;
             if (i < options.retries) {
                 logger.warn(`[Downloader] Download failed for ${url} (attempt ${i + 1}/${options.retries + 1}): ${error.message}. Retrying in 2 seconds...`);
-                // --- THIS IS THE FIX ---: Use the imported sleep function
-                await sleep(2000); // Wait 2 seconds before retrying
+                // Use ctx.sleep for lifecycle-aware delay
+                await ctx.sleep(2000);
             }
         }
     }
@@ -159,4 +159,3 @@ export function getImageUrlAndName(session: any, text: string): { url: string; n
     }
     return { url, name };
 }
-// --- END OF FILE src/utils.ts ---

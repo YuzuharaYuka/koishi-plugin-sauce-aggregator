@@ -37,7 +37,7 @@ export class SearchHandler {
 
         const attachPromises = attachEngines.map(s => {
             if (PUPPETEER_ENGINES.includes(s.name)) {
-                if (this.config.debug.enabled) logger.info(`[Handler] 附加任务 [${s.name}] 已加入 Puppeteer 队列。`);
+                if (this.config.debug.enabled) logger.info(`附加任务 [${s.name}] 已加入 Puppeteer 队列。`);
                 return this.puppeteerSemaphore.run(() => this.performSearch(s, options));
             }
             return this.performSearch(s, options);
@@ -74,7 +74,7 @@ export class SearchHandler {
             const task = () => this.performSearch(searcher, options);
             
             if (PUPPETEER_ENGINES.includes(searcher.name)) {
-                if (this.config.debug.enabled) logger.info(`[Handler] Puppeteer 任务 [${searcher.name}] 已加入队列。`);
+                if (this.config.debug.enabled) logger.info(`Puppeteer 任务 [${searcher.name}] 已加入队列。`);
                 puppeteerTasks.push(this.puppeteerSemaphore.run(task));
             } else {
                 apiTasks.push(task());
@@ -307,7 +307,7 @@ export class SearchHandler {
             };
 
             if (PUPPETEER_ENGINES.includes(searcher.name)) {
-                if (this.config.debug.enabled) logger.info(`[Handler] Puppeteer 任务 [${searcher.name}] 已加入队列。`);
+                if (this.config.debug.enabled) logger.info(`Puppeteer 任务 [${searcher.name}] 已加入队列。`);
                 puppeteerProcessingPromises.push(this.puppeteerSemaphore.run(task));
             } else {
                 apiProcessingPromises.push(task());

@@ -27,30 +27,30 @@ export class PuppeteerManager {
     public async initialize(): Promise<void> {
         if (this._isInitialized || !this.config.puppeteer.persistentBrowser) return;
 
-        logger.info('[Stealth] 正在预初始化常驻浏览器实例...');
+        logger.info('正在预初始化常驻浏览器实例...');
         try {
             await this.getBrowser();
             this._isInitialized = true;
-            logger.info('[Stealth] 常驻浏览器实例已成功预初始化。');
+            logger.info('常驻浏览器实例已成功预初始化。');
         } catch (error) {
-            logger.error('[Stealth] 预初始化常驻浏览器实例失败:', error);
+            logger.error('预初始化常驻浏览器实例失败:', error);
         }
     }
 
     private async getBrowserPath(): Promise<string | null> {
         const customPath = this.config.puppeteer.chromeExecutablePath;
         if (customPath) {
-            if (this.config.debug.enabled) logger.info(`[Stealth] 使用用户配置的浏览器路径: ${customPath}`);
+            if (this.config.debug.enabled) logger.info(`使用用户配置的浏览器路径: ${customPath}`);
             return customPath;
         }
         
         try {
-            if (this.config.debug.enabled) logger.info('[Stealth] 正在使用 puppeteer-finder 自动检测浏览器...');
+            if (this.config.debug.enabled) logger.info('正在自动检测浏览器...');
             const browserPath = await find();
-            logger.info(`[Stealth] 自动检测到浏览器路径: ${browserPath}`);
+            logger.info(`自动检测到浏览器路径: ${browserPath}`);
             return browserPath;
         } catch (error) {
-            logger.warn('[Stealth] puppeteer-finder 未能找到任何浏览器:', error);
+            logger.warn('puppeteer-finder 未能找到任何浏览器:', error);
             return null;
         }
     }
@@ -75,7 +75,7 @@ export class PuppeteerManager {
         });
 
         browser.on('disconnected', () => {
-            logger.warn('[Stealth] 共享浏览器实例已断开连接。');
+            logger.warn('共享浏览器实例已断开连接。');
             this._browserPromise = null;
         });
         return browser;
@@ -85,7 +85,7 @@ export class PuppeteerManager {
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
-            if (this.config.debug.enabled) logger.info('[Stealth] [按需模式] 浏览器被再次使用，已取消自动关闭。');
+            if (this.config.debug.enabled) logger.info('浏览器被再次使用，已取消自动关闭。');
         }
 
         if (this._browserPromise) {
@@ -93,7 +93,7 @@ export class PuppeteerManager {
                 if (browser.isConnected()) {
                     return browser;
                 }
-                if (this.config.debug.enabled) logger.info('[Stealth] 共享浏览器实例已断开，正在启动新的实例...');
+                if (this.config.debug.enabled) logger.info('共享浏览器实例已断开，正在启动新的实例...');
                 this._browserPromise = this.launchBrowser().catch(err => {
                     this._browserPromise = null; 
                     throw err;
@@ -101,7 +101,7 @@ export class PuppeteerManager {
                 return this._browserPromise;
             });
         }
-        if (this.config.debug.enabled) logger.info('[Stealth] 共享浏览器实例不存在，正在启动...');
+        if (this.config.debug.enabled) logger.info('共享浏览器实例不存在，正在启动...');
         this._browserPromise = this.launchBrowser().catch(err => {
             this._browserPromise = null; 
             throw err;
@@ -114,20 +114,20 @@ export class PuppeteerManager {
 
         const browser = await this.getBrowser();
         if ((await browser.pages()).length > 1) {
-            if (this.config.debug.enabled) logger.info(`[Stealth] [按需模式] 仍有 ${(await browser.pages()).length - 1} 个活动页面，暂不关闭。`);
+            if (this.config.debug.enabled) logger.info(`仍有 ${(await browser.pages()).length - 1} 个活动页面，暂不关闭。`);
             return;
         }
 
         const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
         if (timeout <= 0) {
-             if (this.config.debug.enabled) logger.info('[Stealth] [按需模式] 关闭延迟为0，立即关闭浏览器。');
+             if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
              this.dispose();
              return;
         }
 
-        if (this.config.debug.enabled) logger.info(`[Stealth] [按需模式] 所有页面已关闭，将在 ${timeout / 1000} 秒后自动关闭浏览器。`);
+        if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后自动关闭浏览器。`);
         this._closeTimer = setTimeout(() => {
-            if (this.config.debug.enabled) logger.info('[Stealth] [按需模式] 空闲超时，正在关闭浏览器实例...');
+            if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
             this.dispose();
             this._closeTimer = null;
         }, timeout);
@@ -156,7 +156,7 @@ export class PuppeteerManager {
             // Method 1: Check page title, which is often a strong indicator.
             const title = await page.title();
             if (/Just a moment|Checking your browser/i.test(title)) {
-                if (this.config.debug.enabled) logger.info('[Stealth] 检测到 Cloudflare 页面 (基于标题)。');
+                if (this.config.debug.enabled) logger.info('检测到 Cloudflare 页面 (基于标题)。');
                 return true;
             }
 
@@ -172,12 +172,12 @@ export class PuppeteerManager {
             ]);
 
             if (challengeElement) {
-                if (this.config.debug.enabled) logger.info('[Stealth] 检测到 Cloudflare 页面 (基于可见文本内容)。');
+                if (this.config.debug.enabled) logger.info('检测到 Cloudflare 页面 (基于可见文本内容)。');
                 return true;
             }
         } catch (error) {
             // Ignore errors during check, as the page might be navigating.
-            if (this.config.debug.enabled) logger.warn('[Stealth] Cloudflare 检测时发生错误:', error.message);
+            if (this.config.debug.enabled) logger.warn('Cloudflare 检测时发生错误:', error.message);
         }
         return false;
     }
@@ -195,10 +195,10 @@ export class PuppeteerManager {
             const htmlContent = await page.content();
             await fs.writeFile(htmlPath, htmlContent);
 
-            logger.info(`[Stealth] [${contextName}] 已保存错误快照: ${screenshotPath}`);
-            logger.info(`[Stealth] [${contextName}] 已保存错误页面HTML: ${htmlPath}`);
+            logger.info(`[${contextName}] 已保存错误快照: ${screenshotPath}`);
+            logger.info(`[${contextName}] 已保存错误页面HTML: ${htmlPath}`);
         } catch (snapshotError) {
-            logger.error(`[Stealth] [${contextName}] 保存错误快照失败:`, snapshotError);
+            logger.error(`[${contextName}] 保存错误快照失败:`, snapshotError);
         }
     }
 
@@ -212,11 +212,11 @@ export class PuppeteerManager {
             try {
                 const browser = await this._browserPromise;
                 if (browser?.isConnected()) {
-                    if (this.config.debug.enabled) logger.info('[Stealth] 正在关闭共享浏览器实例...');
+                    if (this.config.debug.enabled) logger.info('正在关闭共享浏览器实例...');
                     await browser.close();
                 }
             } catch (error) {
-                logger.warn('[Stealth] 关闭浏览器实例时发生错误:', error);
+                logger.warn('关闭浏览器实例时发生错误:', error);
             }
             this._browserPromise = null;
         }

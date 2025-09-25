@@ -24,14 +24,14 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
     const page = await this.puppeteer.getPage();
 
     try {
-      if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 导航到 ascii2d.net`);
+      if (this.debugConfig.enabled) logger.info(`[ascii2d] 导航到 ascii2d.net`);
       await page.goto('https://ascii2d.net/');
 
       const urlFormSelector = 'form[action="/search/uri"]';
       await page.waitForSelector(urlFormSelector);
       
       const inputSelector = `${urlFormSelector} input[name="uri"]`;
-      if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 正在快速输入 URL...`);
+      if (this.debugConfig.enabled) logger.info(`[ascii2d] 正在输入 URL...`);
       await page.evaluate((selector, value) => {
         const input = document.querySelector(selector) as HTMLInputElement;
         input.value = value;
@@ -41,22 +41,22 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
       const searchButtonSelector = `${urlFormSelector} button[type="submit"]`;
       await page.waitForSelector(searchButtonSelector);
       
-      if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 点击 URL 搜索按钮...`);
+      if (this.debugConfig.enabled) logger.info(`[ascii2d] 点击 URL 搜索按钮...`);
       
       await Promise.all([
           page.waitForNavigation({ waitUntil: 'networkidle0' }).catch(() => {}),
           page.click(searchButtonSelector),
       ]);
       await page.waitForSelector('div.item-box');
-      if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 已加载颜色搜索 (color) 结果页: ${page.url()}`);
+      if (this.debugConfig.enabled) logger.info(`[ascii2d] 已加载颜色搜索结果页: ${page.url()}`);
       
-      if (this.debugConfig.enabled) logger.info(`[ascii2d] [Stealth] 正在解析结果页面...`);
+      if (this.debugConfig.enabled) logger.info(`[ascii2d] 正在解析结果页面...`);
       
       const results = await this.parseResults(page);
       return results.slice(0, options.maxResults);
 
     } catch(error) {
-        logger.error('[ascii2d] [Stealth] 搜索过程中发生错误:', error);
+        logger.error('[ascii2d] 搜索过程中发生错误:', error);
         if (this.debugConfig.enabled) {
             await this.puppeteer.saveErrorSnapshot(page, this.name);
         }
