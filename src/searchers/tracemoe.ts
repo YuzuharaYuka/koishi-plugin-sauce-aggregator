@@ -39,7 +39,8 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
       const seen = new Set<string>()
 
       for (const res of result) {
-        const uniqueKey = `${res.anilist?.id}-${res.episode}`
+        if (!res.anilist) continue;
+        const uniqueKey = `${res.anilist.id}-${res.episode}`
         if (!seen.has(uniqueKey)) {
           seen.add(uniqueKey)
           uniqueResults.push(res)
@@ -48,9 +49,12 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
 
       return uniqueResults.slice(0, options.maxResults).map((res): Searcher.Result => {
         const { anilist, episode, from, similarity, image, video } = res
-        const titles = anilist?.title || {}
+        const titles = anilist.title || {}
         
         const details: string[] = []
+
+        // FIX 2: Move episode to details for semantic correctness
+        if (episode) details.push(`集数: ${episode}`)
 
         if (titles.chinese && titles.romaji && titles.chinese !== titles.romaji) details.push(`罗马音: ${titles.romaji}`)
         if (titles.english) details.push(`英文: ${titles.english}`)
@@ -67,13 +71,14 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
         if (animeInfo) details.push(`信息: ${animeInfo}`)
 
         if (anilist.genres?.length > 0) details.push(`类型: ${anilist.genres.join(', ')}`)
+        
+        // FIX 1: Get studio for the author field
         const mainStudio = anilist.studios?.edges?.find(e => e.isMain)?.node.name
-        if (mainStudio) details.push(`工作室: ${mainStudio}`)
 
         const officialSite = anilist.externalLinks?.find(l => l.site === 'Official Site')?.url
         if (officialSite) details.push(`官网: ${officialSite}`)
         if (anilist.idMal) details.push(`MyAnimeList: https://myanimelist.net/anime/${anilist.idMal}`)
-        if (anilist.siteUrl) details.push(`Anilist: https://anilist.co/anime/${anilist.siteUrl}`)
+        if (anilist.siteUrl) details.push(`Anilist: ${anilist.siteUrl}`)
 
         const formatTime = (seconds: number) => {
           const h = Math.floor(seconds / 3600).toString().padStart(2, '0')
@@ -86,11 +91,12 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
           thumbnail: image,
           similarity: similarity * 100,
           url: video,
-          source: titles.chinese || titles.romaji || '未知动漫',
-          author: `第 ${episode || 'N/A'} 集`,
+          source: titles.chinese || titles.romaji || titles.english || '未知动漫',
+          // FIX 1: Map studio to author
+          author: mainStudio || '未知工作室',
           time: formatTime(from),
           details,
-          coverImage: anilist.coverImage?.extraLarge || anilist.coverImage?.large,
+          coverImage: anilist.coverImage?.large || anilist.coverImage?.medium,
         }
       })
     } catch (error) {

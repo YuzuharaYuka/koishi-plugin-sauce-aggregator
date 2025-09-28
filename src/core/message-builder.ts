@@ -24,11 +24,15 @@ function getEnhancementId(enhancerName: string, result: SearcherResult.Result): 
 }
 
 export async function createResultContent(ctx: Context, result: SearcherResult.Result, engineName?: SearchEngineName): Promise<h[]> {
+    // FIX: Dynamically set the author label based on the engine
+    const authorLabel = engineName === 'tracemoe' ? '工作室' : '作者';
+    
     const textFields = [
       engineName ? `引擎: ${engineName}` : null,
       result.similarity ? `相似度: ${result.similarity.toFixed(2)}%` : null,
       result.source ? `来源: ${result.source}` : null,
-      result.author ? `作者: ${result.author}` : null,
+      // Use the dynamic label here
+      result.author ? `${authorLabel}: ${result.author}` : null,
       result.time ? `时间: ${result.time}` : null,
       ...(result.details || []),
       result.url ? `链接: ${result.url}`: null,
@@ -69,7 +73,8 @@ export async function buildHighConfidenceMessage(
     figureMessage.children.push(h('message', { nickname: '番剧封面', avatar: botUser.avatar }, h.image(result.coverImage)));
   }
   
-  const formattedContent = await createResultContent(ctx, result);
+  // Pass engineName to generate content with the correct label
+  const formattedContent = await createResultContent(ctx, result, engineName);
   const detailsNode = h('message', { nickname: '详细信息', avatar: botUser.avatar }, formattedContent);
   figureMessage.children.push(detailsNode);
 
