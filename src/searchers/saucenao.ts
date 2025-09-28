@@ -11,7 +11,7 @@ const saucenaoIndexMap: Record<number, string> = {
 
 export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
   public readonly name: SearchEngineName = 'saucenao';
-  private keyIndex = 0 
+  private keyIndex = 0
   private timeout: number;
   
   constructor(public ctx: Context, public config: SauceNAOConfig.Config, public debugConfig: DebugConfig, requestTimeout: number) {
@@ -25,16 +25,20 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
       return [];
     }
     
+    // Create a queue of keys to try, starting from the current keyIndex
     const keyQueue = [...apiKeys.slice(this.keyIndex), ...apiKeys.slice(0, this.keyIndex)];
+    let keysTried = 0;
     
-    for (const [index, apiKey] of keyQueue.entries()) {
-        const currentKeyIndex = (this.keyIndex + index) % apiKeys.length;
+    for (const apiKey of keyQueue) {
+        const currentKeyIndex = (this.keyIndex + keysTried) % apiKeys.length;
+        keysTried++;
         
         try {
             if (this.debugConfig.enabled) {
                 logger.info(`[saucenao] 正在尝试使用第 ${currentKeyIndex + 1} 个 Key。`);
             }
             
+            // Modernization: Use native FormData and Blob instead of form-data package
             const form = new FormData()
             form.append('output_type', '2')
             form.append('api_key', apiKey)
@@ -46,7 +50,8 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
 
             const data = await this.ctx.http.post(url, form, { timeout: this.timeout });
 
-            this.keyIndex = (currentKeyIndex + 1) % apiKeys.length;
+            // Bug Fix: Update keyIndex *after* a successful request.
+            this.keyIndex = (this.keyIndex + keysTried) % apiKeys.length;
             
             if (this.debugConfig.logApiResponses.includes(this.name)) {
                 logger.info(`[saucenao] 收到响应: ${JSON.stringify(data, null, 2)}`);
@@ -63,14 +68,16 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
 
             if (data.header.status < 0) {
                 const message = data.header.message || '';
+                // If a key is invalid or exhausted, log it and try the next one.
                 if (message.includes('Search Rate Too High') || 
                     message.includes('Daily Search Limit Exceeded') ||
                     message.includes('Invalid API key') ||
                     message.includes('does not permit API usage')) 
                 {
                     logger.warn(`[saucenao] 第 ${currentKeyIndex + 1} 个 Key 失败: ${message}。正在尝试下一个...`);
-                    continue;
+                    continue; // Try next key
                 }
+                // For other client-side errors, throw
                 throw new Error(`API 返回错误: ${message || '未知客户端错误'}`);
             }
             
@@ -130,12 +137,13 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
         } catch (error) {
             const responseMessage = error.response?.data?.header?.message || '';
             
+            // Also check for these errors at the HTTP level
             if (responseMessage.includes('does not permit API usage') ||
                 responseMessage.includes('Invalid API key') ||
                 responseMessage.includes('Daily Search Limit Exceeded'))
             {
                 logger.warn(`[saucenao] 第 ${currentKeyIndex + 1} 个 Key 失败 (HTTP ${error.response?.status}): ${responseMessage}。正在尝试下一个...`);
-                continue;
+                continue; // Try next key
             }
 
             logger.warn(`[saucenao] 请求出错，将中止此引擎的搜索: ${error.message}`);
@@ -143,10 +151,14 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
                 logger.debug(`[saucenao] 响应状态: ${error.response.status}`);
                 logger.debug(`[saucenao] 响应数据: ${JSON.stringify(error.response.data)}`);
             }
+            // If a critical error occurs, update the keyIndex to avoid retrying the same key
+            this.keyIndex = (this.keyIndex + keysTried) % apiKeys.length;
             throw error;
         }
     }
     
+    // This part is reached only if all keys fail
+    this.keyIndex = (this.keyIndex + keysTried) % apiKeys.length;
     throw new Error('所有 SauceNAO API Key 均尝试失败。');
   }
 }

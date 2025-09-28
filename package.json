@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-sauce-aggregator",
   "description": "聚合以图搜图以及图源链接解析。支持6个常用搜图引擎搜索，4个图源获取原图。",
-  "version": "1.7.7",
+  "version": "1.7.8",
   "homepage": "https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator",
   "repository": {
     "type": "git",
@@ -35,7 +35,6 @@
   "dependencies": {
     "@puppeteer/browsers": "^2.10.0",
     "cheerio": "^1.1.2",
-    "form-data": "^4.0.4",
     "puppeteer-core": "^24.19.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

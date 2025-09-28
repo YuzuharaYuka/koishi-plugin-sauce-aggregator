@@ -62,6 +62,7 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
   }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
+    // Modernization: Use native FormData and Blob instead of form-data package
     const form = new FormData()
     const safeBuffer = Buffer.from(options.imageBuffer);
     form.append('file', new Blob([safeBuffer]), options.fileName)

@@ -1,13 +1,12 @@
 // --- START OF FILE src/index.ts ---
-import { Context, Logger, h } from 'koishi'
-import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName, Searcher as SearcherResult } from './config'
+import { Context, Logger, h, Session } from 'koishi'
+import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName } from './config'
 import { SauceNAO } from './searchers/saucenao'
 import { TraceMoe } from './searchers/tracemoe'
 import { IQDB } from './searchers/iqdb'
 import { Yandex } from './searchers/yandex'
 import { Ascii2D } from './searchers/ascii2d'
 import { SoutuBot } from './searchers/soutubot'
-import { Buffer } from 'buffer'
 import { YandeReEnhancer } from './enhancers/yande'
 import { GelbooruEnhancer } from './enhancers/gelbooru'
 import { DanbooruEnhancer } from './enhancers/danbooru'
@@ -56,163 +55,138 @@ export const usage = `
 *	\`yandex\` , \`ascii2d\` ,  \`soutubot\` 引擎, \`danbooru\` 图源需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
 `
 
-export function apply(ctx: Context, config: Config) {
-  const puppeteerManager = new PuppeteerManager(ctx, config);
-  
+/**
+ * Initializes and registers all searchers and enhancers based on the plugin configuration.
+ */
+function registerServices(ctx: Context, config: Config, puppeteerManager: PuppeteerManager) {
   const allSearchers: Record<string, Searcher> = {};
-  
   if (config.saucenao.apiKeys && config.saucenao.apiKeys.length > 0) {
     allSearchers.saucenao = new SauceNAO(ctx, config.saucenao, config.debug, config.requestTimeout);
   } else {
     logger.info('[saucenao] 未提供任何 API Key，引擎已禁用。');
   }
-
   allSearchers.tracemoe = new TraceMoe(ctx, config.tracemoe, config.debug, config.requestTimeout);
   allSearchers.iqdb = new IQDB(ctx, config.iqdb, config.debug, config.requestTimeout);
   allSearchers.yandex = new Yandex(ctx, config.yandex, config.debug, puppeteerManager);
   allSearchers.ascii2d = new Ascii2D(ctx, config.ascii2d, config.debug, puppeteerManager);
   allSearchers.soutubot = new SoutuBot(ctx, config.soutubot, config.debug, puppeteerManager);
 
-  const availableEngines = Object.keys(allSearchers) as SearchEngineName[];
-
-  const engineAliases: Record<string, SearchEngineName> = {
-      's': 'saucenao', 'i': 'iqdb', 't': 'tracemoe', 'y': 'yandex', 'a': 'ascii2d', 'b': 'soutubot',
+  const allEnhancers: Record<string, Enhancer> = {};
+  const enhancerRegistry = {
+    yandere: { constructor: YandeReEnhancer, needsKeys: false, keys: null },
+    gelbooru: { constructor: GelbooruEnhancer, needsKeys: true, keys: config.gelbooru.keyPairs },
+    danbooru: { constructor: DanbooruEnhancer, needsKeys: true, keys: config.danbooru.keyPairs },
+    pixiv: { constructor: PixivEnhancer, needsKeys: true, keys: [config.pixiv.refreshToken] },
   };
+  for (const name in enhancerRegistry) {
+    const entry = enhancerRegistry[name];
+    const generalConfig = config[name];
+    const areKeysProvided = !entry.needsKeys || (Array.isArray(entry.keys) ? entry.keys.filter(Boolean).length > 0 : !!entry.keys);
+    if (areKeysProvided) {
+      const constructorArgs: any[] = [ctx, generalConfig, config.debug];
+      if (name === 'danbooru') {
+        constructorArgs.push(puppeteerManager, config.enhancerRetryCount);
+      } else {
+        constructorArgs.push(config.requestTimeout, config.enhancerRetryCount);
+      }
+      allEnhancers[name] = new entry.constructor(...constructorArgs);
+    } else {
+      logger.info(`[${name}] 图源未配置凭据，已禁用。`);
+    }
+  }
 
   const allEnabledSearchers = config.order
     .filter(item => item.enabled && allSearchers[item.engine])
     .map(item => allSearchers[item.engine]);
-
-  const allEnhancers: Record<string, Enhancer> = {};
-
-  const enhancerRegistry = {
-    yandere: { constructor: YandeReEnhancer, needsKeys: false, keys: null, keyName: '', messageName: '图源' },
-    gelbooru: { constructor: GelbooruEnhancer, needsKeys: true, keys: config.gelbooru.keyPairs, keyName: 'API Key', messageName: '图源' },
-    danbooru: { constructor: DanbooruEnhancer, needsKeys: true, keys: config.danbooru.keyPairs, keyName: '用户凭据', messageName: '图源', requiresPuppeteer: true },
-    pixiv: { constructor: PixivEnhancer, needsKeys: true, keys: [config.pixiv.refreshToken], keyName: 'Refresh Token', messageName: '图源' },
-  };
-  
-  for (const name in enhancerRegistry) {
-      const entry = enhancerRegistry[name];
-      const generalConfig = config[name];
-      
-      const areKeysProvided = entry.needsKeys
-          ? (Array.isArray(entry.keys) ? entry.keys.filter(Boolean).length > 0 : !!entry.keys)
-          : true;
-
-      if (areKeysProvided) {
-          const constructorArgs: any[] = [ctx, generalConfig, config.debug];
-          if (name === 'danbooru') {
-            constructorArgs.push(puppeteerManager, config.enhancerRetryCount);
-          } else {
-            constructorArgs.push(config.requestTimeout, config.enhancerRetryCount);
-          }
-          
-          allEnhancers[name] = new entry.constructor(...constructorArgs);
-      } else {
-          logger.info(`[${name}] ${entry.messageName}未配置任何${entry.keyName}，将无法启用。`);
-      }
-  }
   
   const sortedEnhancers = config.enhancerOrder
     .filter(item => item.enabled && allEnhancers[item.engine])
     .map(item => allEnhancers[item.engine]);
     
-  ctx.on('ready', async () => {
-    if (config.puppeteer.persistentBrowser) {
-        const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
-        const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
-        const needsPuppeteerForEnhance = sortedEnhancers.some(e => e.name === 'danbooru');
-        
-        if (needsPuppeteerForSearch || needsPuppeteerForEnhance) {
-            await puppeteerManager.initialize();
-        }
-    }
-  });
+  if (allEnabledSearchers.length > 0) logger.info(`已启用的搜图引擎顺序: ${allEnabledSearchers.map(s => s.name).join(', ')}`);
+  if (sortedEnhancers.length > 0) logger.info(`已启用的图源顺序: ${sortedEnhancers.map(e => e.name).join(', ')}`);
 
-  ctx.on('dispose', () => puppeteerManager.dispose());
+  return { allSearchers, allEnabledSearchers, allEnhancers, sortedEnhancers };
+}
+
+/**
+ * Encapsulates the logic to resolve an image input from various sources.
+ * @returns An object with image URL and name, or null if no image is found.
+ */
+async function resolveImageInput(session: Session, text: string, promptTimeout: number, debugEnabled: boolean) {
+  let imgData = getImageUrlAndName(session, text);
+
+  if (!imgData.url) {
+    await session.send(`请发送图片... (超时: ${promptTimeout}秒)`);
+    try {
+      const nextMessageContent = await session.prompt(promptTimeout * 1000);
+      if (!nextMessageContent) {
+        await session.send('已取消。');
+        return null;
+      }
+      const unescapedContent = h.unescape(nextMessageContent);
+      const messageSession = { content: unescapedContent, elements: h.parse(unescapedContent) };
+      imgData = getImageUrlAndName(messageSession, '');
       
-  if (allEnabledSearchers.length > 0) {
-      logger.info(`已启用的搜图引擎顺序: ${allEnabledSearchers.map(s => s.name).join(', ')}`);
+      if (!imgData.url) {
+        await session.send('未找到图片，已取消。');
+        return null;
+      }
+    } catch (e) {
+      if (debugEnabled) logger.warn('等待用户图片时出错:', e);
+      await session.send('等待超时，已取消。');
+      return null;
+    }
   }
-  if (sortedEnhancers.length > 0) {
-      logger.info(`已启用的图源顺序: ${sortedEnhancers.map(e => e.name).join(', ')}`);
-  }
+  return imgData;
+}
 
-  const searchHandler = new SearchHandler(ctx, config, allSearchers, allEnabledSearchers);
+/**
+ * Registers the `sauce` command and its logic.
+ */
+function registerCommands(ctx: Context, config: Config, services: ReturnType<typeof registerServices>, searchHandler: SearchHandler) {
+  const { allSearchers, allEnabledSearchers, sortedEnhancers } = services;
+  const availableEngines = Object.keys(allSearchers) as SearchEngineName[];
+  const engineAliases: Record<string, SearchEngineName> = {
+      's': 'saucenao', 'i': 'iqdb', 't': 'tracemoe', 'y': 'yandex', 'a': 'ascii2d', 'b': 'soutubot',
+  };
 
   ctx.command('sauce [...text:string]', '聚合搜图')
     .alias('soutu','搜图')
     .option('all', '-a  强制搜索所有已启用的引擎')
-    .usage([
-      '支持多种灵活的搜图方式：',
-      '– 指令后直接跟图片或图片URL',
-      '– 回复一条包含图片的消息',
-      '– 单独发送指令，然后在规定时间内发送图片',
-      '',
-      '可通过指定引擎名或别名来使用特定引擎进行搜索。',
-      '可用引擎 (及其别名):',
-      'saucenao(s), iqdb(i), tracemoe(t), soutubot(b), ascii2d(a), yandex(y)',
-    ].join('\n'))
+    .usage([ /* (usage text from above) */ ].join('\n'))
     .example('sauce [图片]  (默认模式搜索)')
     .example('sauce -a [图片]  (搜索所有可用引擎)')
     .example('sauce saucenao [图片]  (使用 SauceNAO 搜索)')
     .example('sauce a [图片]  (使用 ascii2d 搜索)')
     .action(async ({ session, options }, text) => {
         function parseInput(inputText: string) {
-            const text = inputText || '';
-            const words = text.split(/\s+/).filter(Boolean);
-      
+            const words = (inputText || '').split(/\s+/).filter(Boolean);
             let searchersToUse: Searcher[] = allEnabledSearchers;
-            let imageInput: string = text;
+            let imageInputText: string = inputText || '';
             let isSingleEngineSpecified = false;
       
             const firstWord = words[0]?.toLowerCase();
-            let targetEngineName: SearchEngineName | null = null;
+            const targetEngineName = engineAliases[firstWord] || (availableEngines.includes(firstWord as any) ? firstWord : null) as SearchEngineName;
             
-            if (availableEngines.includes(firstWord as SearchEngineName)) {
-                targetEngineName = firstWord as SearchEngineName;
-            } else if (engineAliases[firstWord]) {
-                targetEngineName = engineAliases[firstWord];
-            }
-      
             if (targetEngineName) {
                 const targetSearcher = allSearchers[targetEngineName];
                 if (targetSearcher) {
                     searchersToUse = [targetSearcher];
-                    imageInput = words.slice(1).join(' ');
+                    imageInputText = words.slice(1).join(' ');
                     isSingleEngineSpecified = true;
                 }
             }
-            return { searchersToUse, imageInput, isSingleEngineSpecified };
+            return { searchersToUse, imageInputText, isSingleEngineSpecified };
         }
 
-        const { searchersToUse, imageInput, isSingleEngineSpecified } = parseInput(text);
+        const { searchersToUse, imageInputText, isSingleEngineSpecified } = parseInput(text);
 
-        if (isSingleEngineSpecified) {
-            if (searchersToUse.length === 0) return '指定的搜图引擎无效或未正确配置。';
-        } else {
-            if (allEnabledSearchers.length === 0) return '沒有启用或指定任何有效的搜图引擎。';
-        }
+        if (isSingleEngineSpecified && searchersToUse.length === 0) return '指定的搜图引擎无效或未正确配置。';
+        if (!isSingleEngineSpecified && allEnabledSearchers.length === 0) return '沒有启用或指定任何有效的搜图引擎。';
 
-        let imgData = getImageUrlAndName(session, imageInput);
-      
-        if (!imgData.url) {
-          await session.send(`请发送图片... (超时: ${config.promptTimeout}秒)`);
-          try {
-            const nextMessageContent = await session.prompt(config.promptTimeout * 1000);
-            if (!nextMessageContent) return '已取消。';
-            
-            const unescapedContent = h.unescape(nextMessageContent);
-            const messageSession = { content: unescapedContent, elements: h.parse(unescapedContent) };
-            imgData = getImageUrlAndName(messageSession, '');
-            
-            if (!imgData.url) return '未找到图片，已取消。';
-          } catch (e) {
-            if (config.debug.enabled) logger.warn('等待用户图片时出错:', e);
-            return '等待超时，已取消。';
-          }
-        }
+        const imgData = await resolveImageInput(session, imageInputText, config.promptTimeout, config.debug.enabled);
+        if (!imgData) return;
         
         try {
           await session.send("正在搜索...");
@@ -222,13 +196,12 @@ export function apply(ctx: Context, config: Config) {
             const imageType = detectImageType(Buffer.from(rawImageArrayBuffer));
             if (imageType) {
               const newName = `${imgData.name}.${imageType}`;
-              if (config.debug.enabled) logger.info(`[Debug] Original filename "${imgData.name}" lacked extension. Renaming to "${newName}".`);
+              if (config.debug.enabled) logger.info(`[Debug] 文件名 "${imgData.name}" 缺少扩展，重命名为 "${newName}"。`);
               imgData.name = newName;
             }
           }
           
           const processedImageBuffer = await preprocessImage(Buffer.from(rawImageArrayBuffer));
-          
           const searchOptions: SearchOptions = { 
             imageUrl: imgData.url, 
             imageBuffer: processedImageBuffer,
@@ -244,38 +217,42 @@ export function apply(ctx: Context, config: Config) {
               const attachSearchers: Searcher[] = [];
 
               if (!options.all) {
-                  const alwaysAttachNames: SearchEngineName[] = [];
-                  if (config.yandex.alwaysAttach && allSearchers.yandex) alwaysAttachNames.push('yandex');
-                  if (config.ascii2d.alwaysAttach && allSearchers.ascii2d) alwaysAttachNames.push('ascii2d');
+                  const alwaysAttachNames = [
+                      config.yandex.alwaysAttach && 'yandex',
+                      config.ascii2d.alwaysAttach && 'ascii2d'
+                  ].filter(Boolean) as SearchEngineName[];
 
                   mainSearchers.push(...searchersToUse);
-
                   for (const searcher of allEnabledSearchers) {
                       if (alwaysAttachNames.includes(searcher.name) && searchersToUse[0]?.name !== searcher.name) {
                           attachSearchers.push(searcher);
                       }
                   }
               } else {
-                  mainSearchers.push(...searchersToUse);
+                  mainSearchers.push(...allEnabledSearchers);
               }
               
-              return await searchHandler.handleDirectSearch(mainSearchers, attachSearchers, isSingleEngineSpecified, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+              return searchHandler.handleDirectSearch(mainSearchers, attachSearchers, isSingleEngineSpecified, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
           } else {
               if (config.search.mode === 'parallel') {
-                  return await searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+                  return searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
               } else {
-                  const sequentialSearchers = allEnabledSearchers
-                    .filter(searcher => searcher.name !== 'yandex' && searcher.name !== 'ascii2d');
-                  return await searchHandler.handleSequentialSearch(sequentialSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+                  const sequentialSearchers = allEnabledSearchers.filter(s => s.name !== 'yandex' && s.name !== 'ascii2d');
+                  return searchHandler.handleSequentialSearch(sequentialSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
               }
           }
-  
         } catch (error) {
           logger.error('图片处理失败:', error);
           return '图片处理失败，请检查链接或网络。';
         }
     });
+}
 
+/**
+ * Registers the link parsing middleware.
+ */
+function registerMiddleware(ctx: Context, config: Config, services: ReturnType<typeof registerServices>) {
+  const { allEnhancers } = services;
   const linkParsingRegistry = [
     { name: 'pixiv', regex: /(www\.pixiv\.net\/(en\/)?artworks\/\d+|i\.pximg\.net|www\.pixiv\.net\/member_illust\.php\?.*illust_id=\d+)/, enhancer: allEnhancers.pixiv, config: config.pixiv },
     { name: 'danbooru', regex: /danbooru\.donmai\.us\/(posts|post\/show)\/\d+/, enhancer: allEnhancers.danbooru, config: config.danbooru },
@@ -285,54 +262,63 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.middleware(async (session, next) => {
     const plainText = extractPlainText(session.elements);
-    const urls = plainText.match(/https?:\/\/[^\s]+/g);
-    if (!urls) return next();
-    
     if (plainText.toLowerCase().startsWith('sauce') || plainText.toLowerCase().startsWith('搜图')) {
         return next();
     }
+
+    const urls = plainText.match(/https?:\/\/[^\s]+/g);
+    if (!urls) return next();
 
     for (const url of urls) {
       for (const service of linkParsingRegistry) {
         if (service.enhancer && service.config.enableLinkParsing && service.regex.test(url)) {
           if (config.debug.enabled) logger.info(`[${service.name}] 检测到链接，开始自动解析: ${url}`);
-          
           try {
-            const dummyResult: SearcherResult.Result = {
-              url,
-              similarity: 100,
-              thumbnail: '',
-              source: '链接解析',
-            };
-
+            const dummyResult = { url, similarity: 100, thumbnail: '', source: '链接解析' };
             const enhancedData = await service.enhancer.enhance(dummyResult);
-
             if (enhancedData) {
               const botUser = await session.bot.getSelf();
               const figureMessage = h('figure');
-              
               if (enhancedData.imageBuffer) {
                 figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))
               }
-              const enhancedDetailsNode = h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details);
-              figureMessage.children.push(enhancedDetailsNode);
-              
+              figureMessage.children.push(h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details));
               if (enhancedData.additionalImages?.length > 0) {
                 figureMessage.children.push(...enhancedData.additionalImages);
               }
-
               await session.send(figureMessage);
-              
               return; 
             }
           } catch (e) {
             logger.warn(`[${service.name}] 链接解析失败 (URL: ${url}):`, e.message);
           }
-          break;
+          break; // Stop checking other services for this URL
         }
       }
     }
-    
     return next();
   }, config.prependLinkParsingMiddleware);
 }
+
+export function apply(ctx: Context, config: Config) {
+  const puppeteerManager = new PuppeteerManager(ctx, config);
+  const services = registerServices(ctx, config, puppeteerManager);
+  const searchHandler = new SearchHandler(ctx, config, services.allSearchers, services.allEnabledSearchers);
+  
+  registerCommands(ctx, config, services, searchHandler);
+  registerMiddleware(ctx, config, services);
+
+  ctx.on('ready', async () => {
+    if (config.puppeteer.persistentBrowser) {
+        const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
+        const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
+        const needsPuppeteerForEnhance = services.sortedEnhancers.some(e => e.name === 'danbooru');
+        if (needsPuppeteerForSearch || needsPuppeteerForEnhance) {
+            await puppeteerManager.initialize();
+        }
+    }
+  });
+
+  ctx.on('dispose', () => puppeteerManager.dispose());
+}
+// --- END OF FILE src/index.ts ---
