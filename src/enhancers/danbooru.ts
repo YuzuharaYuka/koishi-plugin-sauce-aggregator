@@ -1,6 +1,6 @@
 // --- START OF FILE src/enhancers/danbooru.ts ---
 import { Context, Logger, h } from 'koishi'
-import { Danbooru as DanbooruConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
+import { Config, Danbooru as DanbooruConfig, Enhancer, EnhancedResult, Searcher } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
 import { getImageTypeFromUrl } from '../utils'
 
@@ -21,7 +21,7 @@ interface DanbooruPost {
   tag_string_artist: string;
   tag_string_character: string;
   tag_string_copyright: string;
-  tag_string_meta?: string; // Add optional meta tag string
+  tag_string_meta?: string;
   file_ext: string;
   file_size: number;
   fav_count: number;
@@ -32,23 +32,23 @@ interface DanbooruPost {
   message?: string;
 }
 
+// Danbooru 图源增强器，使用 Puppeteer 绕过 Cloudflare 获取数据
 export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
   public readonly name: 'danbooru' = 'danbooru';
   private puppeteer: PuppeteerManager;
-  private retries: number;
   
-  constructor(public ctx: Context, public config: DanbooruConfig.Config, public debugConfig: DebugConfig, puppeteerManager: PuppeteerManager, enhancerRetryCount: number) {
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: DanbooruConfig.Config, puppeteerManager: PuppeteerManager) {
     this.puppeteer = puppeteerManager;
-    this.retries = enhancerRetryCount;
   }
 
+  // 增强单个搜索结果，获取 Danbooru 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
     const danbooruUrl = this.findDanbooruUrl(result);
     if (!danbooruUrl) return null;
 
     const postId = this.parsePostId(danbooruUrl);
     if (!postId) {
-      if (this.debugConfig.enabled) logger.info(`[danbooru] 在链接 ${danbooruUrl} 中未找到有效的帖子 ID。`);
+      if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 在链接 ${danbooruUrl} 中未找到有效的帖子 ID。`);
       return null;
     }
     
@@ -58,15 +58,14 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       let post: DanbooruPost;
       let imageBuffer: Buffer;
       
-      const keyPair = this.config.keyPairs[Math.floor(Math.random() * this.config.keyPairs.length)];
+      const keyPair = this.subConfig.keyPairs[Math.floor(Math.random() * this.subConfig.keyPairs.length)];
       const apiBaseUrl = `https://danbooru.donmai.us/posts/${postId}.json`;
-      const apiUrl = (keyPair && keyPair.username && keyPair.apiKey)
+      const apiUrl = (keyPair?.username && keyPair?.apiKey)
         ? `${apiBaseUrl}?login=${keyPair.username}&api_key=${keyPair.apiKey}` 
         : apiBaseUrl;
 
-      if (this.debugConfig.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 获取 API: ${apiBaseUrl}`);
+      if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 获取 API: ${apiBaseUrl}`);
       
-      // Go to a neutral page first to establish context
       await page.goto('https://danbooru.donmai.us', { waitUntil: 'domcontentloaded' });
       
       const jsonContent = await page.evaluate(async (url) => {
@@ -79,11 +78,11 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
                       return JSON.stringify({ isCloudflare: true });
                   }
               }
-              throw new Error(`API Request failed with status ${res.status}`);
+              throw new Error(`API 请求失败，状态码: ${res.status}`);
             }
             return await res.text();
         } catch (e) {
-            throw new Error(`Fetch failed: ${e.message}`);
+            throw new Error(`Fetch 失败: ${e.message}`);
         }
       }, apiUrl);
 
@@ -95,15 +94,15 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       
       post = responseData as DanbooruPost;
 
-      if (this.debugConfig.logApiResponses.includes(this.name)) {
+      if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info(`[danbooru] API 响应: ${JSON.stringify(post, null, 2)}`);
       }
       
-      if (post.success === false) throw new Error(`API returned an error: ${post.message || 'Authentication failed'}`);
-      if (!post.id) throw new Error(`API did not return a valid post object.`);
+      if (post.success === false) throw new Error(`API 返回错误: ${post.message || '凭据验证失败'}`);
+      if (!post.id) throw new Error(`API 未返回有效的帖子对象。`);
 
       let downloadUrl: string;
-      switch(this.config.postQuality) {
+      switch(this.subConfig.postQuality) {
         case 'original': downloadUrl = post.file_url; break;
         case 'sample': downloadUrl = post.large_file_url; break;
         case 'preview': downloadUrl = post.preview_file_url; break;
@@ -111,7 +110,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       }
 
       if (downloadUrl) {
-        if (this.debugConfig.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
+        if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
         
         const imageBase64 = await page.evaluate(async (url, retries) => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -121,43 +120,42 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
                 try {
                     const response = await fetch(url, { mode: 'cors' });
                     if (!response.ok) {
-                        throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+                        throw new Error(`图片 fetch 失败: ${response.status} ${response.statusText}`);
                     }
                     const buffer = await response.arrayBuffer();
                     let binary = '';
                     const bytes = new Uint8Array(buffer);
-                    const len = bytes.byteLength;
-                    for (let j = 0; j < len; j++) {
+                    for (let j = 0; j < bytes.byteLength; j++) {
                         binary += String.fromCharCode(bytes[j]);
                     }
                     return btoa(binary);
                 } catch (error) {
                     lastError = error;
                     if (i < retries) {
-                        console.log(`[Danbooru Downloader] Attempt ${i + 1} failed. Retrying in 2s...`);
+                        console.log(`[Danbooru Downloader] 尝试 ${i + 1} 失败，2秒后重试...`);
                         await sleep(2000);
                     }
                 }
             }
-            throw new Error(`Failed to download after ${retries + 1} attempts. Last error: ${lastError.message}`);
-        }, downloadUrl, this.retries);
+            throw new Error(`下载失败 (${retries + 1}次尝试)。最后错误: ${lastError.message}`);
+        }, downloadUrl, this.mainConfig.enhancerRetryCount);
 
         if (!imageBase64) {
-          throw new Error('Failed to download image or convert to Base64 in browser context.');
+          throw new Error('在浏览器上下文中下载图片或转换 Base64 失败。');
         }
         
         imageBuffer = Buffer.from(imageBase64, 'base64');
-        if (this.debugConfig.enabled) logger.info(`[danbooru] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
+        if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
       }
       
       const ratingMap = { g: 'general', s: 'sensitive', q: 'questionable', e: 'explicit' };
       const ratingHierarchy = { general: 1, sensitive: 2, questionable: 3, explicit: 4 };
       const postRating = ratingMap[post.rating] as keyof typeof ratingHierarchy;
       const postRatingLevel = ratingHierarchy[postRating];
-      const maxAllowedLevel = ratingHierarchy[this.config.maxRating];
+      const maxAllowedLevel = ratingHierarchy[this.subConfig.maxRating];
 
       if (postRatingLevel > maxAllowedLevel) {
-        if (this.debugConfig.enabled) logger.info(`[danbooru] 帖子 ${post.id} 的评级 '${postRating}' 超出设置 '${this.config.maxRating}'，已跳过。`);
+        if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 帖子 ${post.id} 的评级 '${postRating}' 超出设置 '${this.subConfig.maxRating}'，已跳过。`);
         return { details: [h.text(`[!] Danbooru 图源的评级 (${postRating}) 超出设置，已隐藏详情。`)] };
       }
 
@@ -171,7 +169,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
         throw error;
       }
       logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, error);
-      if (this.debugConfig.enabled && !(error.message.includes('Fetch failed'))) {
+      if (this.mainConfig.debug.enabled && !(error.message.includes('Fetch 失败'))) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }
       throw new Error(`[danbooru] 处理失败: ${error.message}`);
@@ -180,6 +178,7 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     }
   }
   
+  // 从结果中查找有效的 Danbooru 链接
   private findDanbooruUrl(result: Searcher.Result): string | null {
     const urlRegex = /(https?:\/\/danbooru\.donmai\.us\/(posts|post\/show)\/\d+)/;
     if (result.url && urlRegex.test(result.url)) return result.url;
@@ -192,18 +191,19 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     return null;
   }
 
+  // 从 Danbooru 链接中解析帖子 ID
   private parsePostId(url: string): string | null {
     const match = url.match(/(\d+)/g);
     return match ? match[match.length - 1] : null;
   }
   
+  // 构建展示给用户的详细信息元素
   private buildDetailNodes(post: DanbooruPost): h[] {
     const info: string[] = [];
     const formatTags = (tagString: string) => (tagString || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean).join(', ');
 
     info.push(`Danbooru (ID: ${post.id})`);
 
-    // Categorized tags
     const artists = formatTags(post.tag_string_artist);
     if (artists) info.push(`作者: ${artists}`);
 
@@ -213,7 +213,6 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     const characters = formatTags(post.tag_string_character);
     if (characters) info.push(`角色: ${characters}`);
 
-    // Post metadata
     info.push(`评分: ${post.score} (收藏: ${post.fav_count})`);
     info.push(`等级: ${post.rating.toUpperCase()}`);
     
@@ -222,7 +221,6 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
         info.push(`发布于: ${postDate}`);
     }
 
-    // File info
     if (post.file_size > 0) {
         const fileSizeMB = (post.file_size / 1024 / 1024).toFixed(2);
         info.push(`文件信息: ${post.image_width}x${post.image_height} (${fileSizeMB} MB, ${post.file_ext})`);
@@ -234,13 +232,11 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
       info.push(`原始来源: ${post.source}`);
     }
 
-    // --- NEW: Display Meta Tags ---
     const metaTags = formatTags(post.tag_string_meta);
     if (metaTags) info.push(`元标签: ${metaTags}`);
     
-    // General tags
     const allTags = (post.tag_string_general || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean);
-    const MAX_GENERAL_TAGS = 35; // Increased limit
+    const MAX_GENERAL_TAGS = 35;
     const displayedTags = allTags.slice(0, MAX_GENERAL_TAGS).join(', ');
     const remainingCount = allTags.length - MAX_GENERAL_TAGS;
     
@@ -253,3 +249,4 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+// --- END OF FILE src/enhancers/danbooru.ts ---

@@ -12,6 +12,7 @@ import path from 'path';
 const logger = new Logger('sauce-aggregator:puppeteer')
 puppeteer.use(StealthPlugin())
 
+// 负责管理 Puppeteer 浏览器实例的生命周期、并发和页面创建
 export class PuppeteerManager {
     private _browserPromise: Promise<Browser> | null = null;
     private ctx: Context;
@@ -24,6 +25,7 @@ export class PuppeteerManager {
         this.config = config;
     }
 
+    // 预初始化常驻浏览器实例
     public async initialize(): Promise<void> {
         if (this._isInitialized || !this.config.puppeteer.persistentBrowser) return;
 
@@ -133,12 +135,14 @@ export class PuppeteerManager {
         }, timeout);
     }
 
+    // 获取一个新的浏览器页面
     public async getPage(): Promise<Page> {
         const browser = await this.getBrowser();
         const page = await browser.newPage();
         page.setDefaultTimeout(this.config.requestTimeout * 1000);
         await page.setBypassCSP(true);
         
+        // 如果不是常驻模式，监听页面关闭事件以安排浏览器关闭
         if (!this.config.puppeteer.persistentBrowser) {
             page.on('close', () => this.scheduleClose());
         }
@@ -146,26 +150,18 @@ export class PuppeteerManager {
         return page;
     }
 
-    /**
-     * Checks if the current page is a Cloudflare challenge page using precise methods.
-     * @param page The Puppeteer page instance.
-     * @returns `true` if a Cloudflare challenge is detected, `false` otherwise.
-     */
+    // 检查当前页面是否为人机验证页面
     public async checkForCloudflare(page: Page): Promise<boolean> {
         try {
-            // Method 1: Check page title, which is often a strong indicator.
             const title = await page.title();
             if (/Just a moment|Checking your browser/i.test(title)) {
                 if (this.config.debug.enabled) logger.info('检测到 Cloudflare 页面 (基于标题)。');
                 return true;
             }
 
-            // Method 2: Check for specific, visible text content that only appears on challenge pages.
-            // This is more robust than scanning the entire HTML source.
             const verificationTextSelector = '::-p-text("Verifying you are human")';
             const securityReviewTextSelector = '::-p-text("needs to review the security of your connection")';
             
-            // Use Promise.race to quickly find either element without waiting for both.
             const challengeElement = await Promise.race([
                 page.waitForSelector(verificationTextSelector, { timeout: 1000 }).catch(() => null),
                 page.waitForSelector(securityReviewTextSelector, { timeout: 1000 }).catch(() => null),
@@ -176,12 +172,12 @@ export class PuppeteerManager {
                 return true;
             }
         } catch (error) {
-            // Ignore errors during check, as the page might be navigating.
             if (this.config.debug.enabled) logger.warn('Cloudflare 检测时发生错误:', error.message);
         }
         return false;
     }
 
+    // 保存页面快照（HTML和截图）用于调试
     public async saveErrorSnapshot(page: Page, contextName: string): Promise<void> {
         try {
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -202,6 +198,7 @@ export class PuppeteerManager {
         }
     }
 
+    // 释放并关闭浏览器实例
     public async dispose() {
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
@@ -222,3 +219,4 @@ export class PuppeteerManager {
         }
     }
 }
+// --- END OF FILE src/puppeteer.ts ---

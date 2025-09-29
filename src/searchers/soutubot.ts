@@ -1,6 +1,6 @@
 // --- START OF FILE src/searchers/soutubot.ts ---
 import { Context, Logger } from 'koishi'
-import { Searcher, SearchOptions, DebugConfig, SearchEngineName } from '../config'
+import { Config, Searcher, SearchOptions, SoutuBot as SoutuBotConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -8,34 +8,29 @@ import type { Page } from 'puppeteer-core';
 
 const logger = new Logger('sauce-aggregator')
 
-export namespace SoutuBot {
-    export interface Config { 
-      confidenceThreshold?: number; 
-      maxHighConfidenceResults?: number;
-    }
-}
-
-export class SoutuBot implements Searcher<SoutuBot.Config> {
+// SoutuBot 搜图引擎实现
+export class SoutuBot implements Searcher<SoutuBotConfig.Config> {
   public readonly name: SearchEngineName = 'soutubot';
   private puppeteer: PuppeteerManager;
   
-  constructor(public ctx: Context, public config: SoutuBot.Config, public debugConfig: DebugConfig, puppeteerManager: PuppeteerManager) {
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: SoutuBotConfig.Config, puppeteerManager: PuppeteerManager) {
     this.puppeteer = puppeteerManager;
   }
 
+  // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const page = await this.puppeteer.getPage();
     const tempFilePath = path.resolve(this.ctx.baseDir, 'temp', `sauce-aggregator-soutubot-${Date.now()}-${options.fileName}`);
+    let tempFileCreated = false;
 
     try {
       const url = `https://soutubot.moe/`
-      if (this.debugConfig.enabled) logger.info(`[soutubot] 导航到: ${url}`);
+      if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 导航到: ${url}`);
       await page.goto(url, { waitUntil: 'networkidle0' });
 
       if (await this.puppeteer.checkForCloudflare(page)) {
-          // --- NEW: Conditionally save snapshot on Cloudflare detection ---
-          if (this.debugConfig.enabled && this.debugConfig.logApiResponses.includes(this.name)) {
-              logger.info(`[soutubot] [Debug] 检测到 Cloudflare，正在保存页面快照以供分析...`);
+          if (this.mainConfig.debug.enabled && this.mainConfig.debug.logApiResponses.includes(this.name)) {
+              logger.info(`[soutubot] 检测到 Cloudflare，正在保存页面快照...`);
               await this.puppeteer.saveErrorSnapshot(page, `${this.name}-cloudflare`);
           }
           throw new Error('检测到 Cloudflare 人机验证页面。这通常由您的网络环境或代理 IP 引起。请尝试更换网络环境或暂时禁用此引擎。');
@@ -47,35 +42,31 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
 
       await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
       await fs.writeFile(tempFilePath, options.imageBuffer);
+      tempFileCreated = true;
       
-      if (this.debugConfig.enabled) logger.info(`[soutubot] 正在上传临时文件: ${tempFilePath}`);
+      if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 正在上传临时文件: ${tempFilePath}`);
       await inputUploadHandle.uploadFile(tempFilePath);
       
       const firstResultSelector = '.card-2';
       const noResultSelector = 'div.text-center > h3';
       
-      if (this.debugConfig.enabled) logger.info(`[soutubot] 等待搜索结果加载...`);
-      
+      if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 等待搜索结果加载...`);
       await page.waitForSelector(`${firstResultSelector}, ${noResultSelector}`);
+      if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 结果已加载，正在解析...`);
 
-      if (this.debugConfig.enabled) logger.info(`[soutubot] 结果已加载，正在解析...`);
-
-      if (this.debugConfig.logApiResponses.includes(this.name)) {
+      if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         const html = await page.content();
         logger.info({ '[soutubot] Raw HTML Response': html });
       }
       
-      const maxNeeded = Math.max(options.maxResults, this.config.maxHighConfidenceResults || 1);
-
-      const results = await this.parseResults(page, maxNeeded);
-      return results;
+      const maxNeeded = Math.max(options.maxResults, this.subConfig.maxHighConfidenceResults || 1);
+      return await this.parseResults(page, maxNeeded);
 
     } catch (error) {
-      if (error.message.includes('Cloudflare')) {
-        throw error;
-      }
+      if (error.message.includes('Cloudflare')) throw error;
+      
       logger.error(`[soutubot] 搜索过程中发生错误:`, error);
-      if (this.debugConfig.enabled) {
+      if (this.mainConfig.debug.enabled) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }
       if (error.name === 'TimeoutError') {
@@ -84,32 +75,35 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
       throw error;
     } finally {
         if (page && !page.isClosed()) await page.close();
-        try {
-            await fs.unlink(tempFilePath);
-        } catch {}
+        if (tempFileCreated) {
+            try {
+                await fs.unlink(tempFilePath);
+            } catch {}
+        }
     }
   }
 
+  // 解析结果页面
   private async parseResults(page: Page, maxNeeded: number): Promise<Searcher.Result[]> {
     const rawResults = await page.$$eval('.card-2', (cards: HTMLDivElement[], maxNeeded) => {
         const langMap = { cn: '中文', jp: '日文', gb: '英文', kr: '韩文' };
         
         return cards.slice(0, maxNeeded).map(card => {
-            const similarityLabel = Array.from(card.querySelectorAll('span')).find(el => el.textContent.trim() === '匹配度:');
-            const similarityText = similarityLabel ? similarityLabel.nextElementSibling?.textContent.trim().replace('%', '') : '0';
+            const similarityLabel = Array.from(card.querySelectorAll('span')).find(el => el.textContent?.trim() === '匹配度:');
+            const similarityText = similarityLabel?.nextElementSibling?.textContent?.trim().replace('%', '') || '0';
 
             const title = (card.querySelector('.font-semibold span') as HTMLElement)?.innerText;
             const thumbnail = (card.querySelector('a[target="_blank"] img') as HTMLImageElement)?.src;
 
             const sourceImg = (card.querySelector('img[src*="/images/icons/"]') as HTMLImageElement);
-            const sourceName = sourceImg ? sourceImg.src.split('/').pop().replace('.png', '') : '未知';
+            const sourceName = sourceImg ? sourceImg.src.split('/').pop()?.replace('.png', '') : '未知';
             
             const langFlag = card.querySelector('span.fi[class*="fi-"]');
-            const langCode = langFlag ? Array.from(langFlag.classList).find(c => c.startsWith('fi-')).replace('fi-', '') : null;
-            const language = langMap[langCode] || langCode;
+            const langCode = langFlag ? Array.from(langFlag.classList).find(c => c.startsWith('fi-'))?.replace('fi-', '') : null;
+            const language = langCode ? (langMap[langCode] || langCode) : null;
 
-            const detailPageLink = Array.from(card.querySelectorAll('a.el-button')).find(a => a.textContent.includes('详情页')) as HTMLAnchorElement;
-            const imagePageLink = Array.from(card.querySelectorAll('a.el-button')).find(a => a.textContent.includes('图片页')) as HTMLAnchorElement;
+            const detailPageLink = Array.from(card.querySelectorAll('a.el-button')).find(a => a.textContent?.includes('详情页')) as HTMLAnchorElement;
+            const imagePageLink = Array.from(card.querySelectorAll('a.el-button')).find(a => a.textContent?.includes('图片页')) as HTMLAnchorElement;
 
             return {
                 thumbnail,
@@ -127,7 +121,8 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
     return rawResults.map(res => {
         const details: string[] = [];
         if (res.language) details.push(`语言: ${res.language}`);
-        const pageMatch = res.imagePageText.match(/\(P(\d+)\)/);
+        
+        const pageMatch = res.imagePageText?.match(/\(P(\d+)\)/);
         if (res.imageUrl) {
             let linkText = "图片页";
             if (pageMatch) linkText += ` (P${pageMatch[1]})`;
@@ -144,3 +139,4 @@ export class SoutuBot implements Searcher<SoutuBot.Config> {
     });
   }
 }
+// --- END OF FILE src/searchers/soutubot.ts ---

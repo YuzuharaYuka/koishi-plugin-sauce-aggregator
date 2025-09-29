@@ -1,9 +1,10 @@
 // --- START OF FILE src/enhancers/yande.ts ---
 import { Context, Logger, h } from 'koishi'
-import { YandeRe as YandeReConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
+import { Config, YandeRe as YandeReConfig, Enhancer, EnhancedResult, Searcher } from '../config'
 import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
+const YANDERE_URL_REGEX = /(https?:\/\/yande\.re\/post\/show\/\d+)/;
 
 interface YandeRePost {
   id: number
@@ -23,17 +24,13 @@ interface YandeRePost {
   [key: string]: any
 }
 
-
+// Yande.re 图源增强器
 export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
   public readonly name: 'yandere' = 'yandere';
-  private timeout: number;
-  private retries: number;
 
-  constructor(public ctx: Context, public config: YandeReConfig.Config, public debugConfig: DebugConfig, requestTimeout: number, enhancerRetryCount: number) {
-      this.timeout = requestTimeout * 1000;
-      this.retries = enhancerRetryCount;
-  }
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: YandeReConfig.Config) {}
 
+  // 增强单个搜索结果，获取 Yande.re 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
     const yandeReUrl = this.findYandeReUrl(result);
     if (!yandeReUrl) return null;
@@ -41,18 +38,18 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     const postId = this.parsePostId(yandeReUrl)
     if (!postId) return null
 
-    if (this.debugConfig.enabled) logger.info(`[yande.re] 检测到 Yande.re 链接，帖子 ID: ${postId}，开始获取图源信息...`)
+    if (this.mainConfig.debug.enabled) logger.info(`[yande.re] 检测到 Yande.re 链接，帖子 ID: ${postId}，开始获取图源信息...`)
 
     try {
       const apiUrl = `https://yande.re/post.json?tags=id:${postId}`
-      const response = await this.ctx.http.get<YandeRePost[]>(apiUrl, { timeout: this.timeout })
+      const response = await this.ctx.http.get<YandeRePost[]>(apiUrl, { timeout: this.mainConfig.requestTimeout * 1000 })
 
-      if (this.debugConfig.logApiResponses.includes(this.name)) {
+      if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info(`[yande.re] API 响应: ${JSON.stringify(response, null, 2)}`)
       }
 
       if (!response || response.length === 0) {
-        if (this.debugConfig.enabled) logger.warn(`[yande.re] API 未能找到 ID 为 ${postId} 的帖子。`)
+        if (this.mainConfig.debug.enabled) logger.warn(`[yande.re] API 未能找到 ID 为 ${postId} 的帖子。`)
         return null
       }
 
@@ -60,27 +57,32 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
 
       const ratingHierarchy = { s: 1, q: 2, e: 3 };
       const postRatingLevel = ratingHierarchy[post.rating];
-      const maxAllowedLevel = ratingHierarchy[this.config.maxRating];
+      const maxAllowedLevel = ratingHierarchy[this.subConfig.maxRating];
       
       if (postRatingLevel > maxAllowedLevel) {
-        if (this.debugConfig.enabled) logger.info(`[yande.re] 帖子 ${postId} 的评级为 '${post.rating.toUpperCase()}'，超出了配置允许的最高等级 '${this.config.maxRating.toUpperCase()}'，已跳过。`);
+        if (this.mainConfig.debug.enabled) logger.info(`[yande.re] 帖子 ${postId} 的评级为 '${post.rating.toUpperCase()}'，超出配置允许的最高等级 '${this.subConfig.maxRating.toUpperCase()}'，已跳过。`);
         return { details: [h.text(`[!] Yande.re 图源的评级 (${post.rating.toUpperCase()}) 超出设置，已隐藏详情。`)] };
       }
 
       const details: h[] = this.buildDetailNodes(post)
 
       let downloadUrl: string;
-      switch (this.config.postQuality) {
+      switch (this.subConfig.postQuality) {
         case 'original': downloadUrl = post.file_url; break;
         case 'sample': downloadUrl = post.sample_url; break;
         case 'jpeg': default: downloadUrl = post.jpeg_url; break;
       }
 
-      if (this.debugConfig.enabled) logger.info(`[yande.re] 正在下载图源图片 (${this.config.postQuality} 质量)... URL: ${downloadUrl}`)
+      if (!downloadUrl) {
+        if (this.mainConfig.debug.enabled) logger.warn(`[yande.re] 帖子 ${postId} 缺少任何可用的图片 URL。`);
+        return { details };
+      }
+
+      if (this.mainConfig.debug.enabled) logger.info(`[yande.re] 正在下载图源图片 (${this.subConfig.postQuality} 质量)... URL: ${downloadUrl}`)
 
       const imageBuffer = await downloadWithRetry(this.ctx, downloadUrl, {
-          retries: this.retries,
-          timeout: this.timeout
+          retries: this.mainConfig.enhancerRetryCount,
+          timeout: this.mainConfig.requestTimeout * 1000,
       });
       const imageType = getImageTypeFromUrl(downloadUrl)
 
@@ -91,28 +93,27 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     }
   }
   
+  // 从结果中查找有效的 Yande.re 链接
   private findYandeReUrl(result: Searcher.Result): string | null {
-    const urlRegex = /(https?:\/\/yande\.re\/post\/show\/\d+)/;
-    
-    if (result.url && urlRegex.test(result.url)) {
+    if (result.url && YANDERE_URL_REGEX.test(result.url)) {
         return result.url;
     }
-
     if (result.details) {
         for (const detail of result.details) {
-            const match = String(detail).match(urlRegex);
+            const match = String(detail).match(YANDERE_URL_REGEX);
             if (match) return match[0];
         }
     }
-    
     return null;
   }
 
+  // 从 Yande.re 链接中解析帖子 ID
   private parsePostId(url: string): string | null {
     const match = url.match(/yande\.re\/post\/show\/(\d+)/)
     return match ? match[1] : null
   }
   
+  // 构建展示给用户的详细信息元素
   private buildDetailNodes(post: YandeRePost): h[] {
     const info: string[] = [];
     info.push(`Yande.re (ID: ${post.id})`);
@@ -141,3 +142,4 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+// --- END OF FILE src/enhancers/yande.ts ---

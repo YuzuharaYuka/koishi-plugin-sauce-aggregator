@@ -1,4 +1,6 @@
-import { Context, h, Logger, Session } from 'koishi';
+// --- START OF FILE src/core/search-handler.ts ---
+
+import { Context, h, Logger } from 'koishi';
 import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer } from '../config';
 import * as MessageBuilder from './message-builder';
 import { Semaphore } from './semaphore';
@@ -9,6 +11,7 @@ type SearchOutput = { engine: SearchEngineName; results: SearcherResult.Result[]
 
 const PUPPETEER_ENGINES: SearchEngineName[] = ['yandex', 'soutubot', 'ascii2d'];
 
+// 负责调度和执行所有搜图策略的核心处理器
 export class SearchHandler {
     private puppeteerSemaphore: Semaphore;
 
@@ -32,7 +35,7 @@ export class SearchHandler {
         }
     }
 
-    private async handleAttachEngines(attachEngines: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[]) {
+    private async handleAttachEngines(attachEngines: Searcher[], options: SearchOptions, botUser: any, session: any, collectedErrors: string[]) {
         if (attachEngines.length === 0) return;
 
         const attachPromises = attachEngines.map(s => {
@@ -85,7 +88,17 @@ export class SearchHandler {
         return Promise.all(allPromises);
     }
 
-    public async handleDirectSearch(mainSearchers: Searcher[], attachSearchers: Searcher[], isSingleEngineSearch: boolean, options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
+    // 处理指定引擎搜索或 --all 全量搜索
+    public async handleDirectSearch(
+      mainSearchers: Searcher[],
+      attachSearchers: Searcher[],
+      isSingleEngineSearch: boolean,
+      options: SearchOptions,
+      botUser: any,
+      session: any,
+      collectedErrors: string[],
+      sortedEnhancers: Enhancer[]
+    ) {
         const mainOutputs = await this.executeSearch(mainSearchers, options);
         mainOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
 
@@ -158,7 +171,15 @@ export class SearchHandler {
         }
     }
 
-    public async handleSequentialSearch(searchers: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers) {
+    // 处理串行搜索策略
+    public async handleSequentialSearch(
+      searchers: Searcher[],
+      options: SearchOptions,
+      botUser: any,
+      session: any,
+      collectedErrors: string[],
+      sortedEnhancers: Enhancer[]
+    ) {
         const executedOutputs: SearchOutput[] = [];
         let highConfidenceResults: SearcherResult.Result[] = [];
         let highConfidenceSearcherName: SearchEngineName = null;
@@ -240,7 +261,15 @@ export class SearchHandler {
         }
     }
     
-    public async handleParallelSearch(searchers: Searcher[], options: SearchOptions, botUser, session, collectedErrors: string[], sortedEnhancers: Enhancer[]) {
+    // 处理并行搜索策略
+    public async handleParallelSearch(
+      searchers: Searcher[],
+      options: SearchOptions,
+      botUser: any,
+      session: any,
+      collectedErrors: string[],
+      sortedEnhancers: Enhancer[]
+    ) {
         let highConfidenceSent = false;
         const processedEnhancements = new Set<string>();
         const lowConfidenceOutputs: SearchOutput[] = [];
@@ -346,3 +375,4 @@ export class SearchHandler {
         }
     }
 }
+// --- END OF FILE src/core/search-handler.ts ---

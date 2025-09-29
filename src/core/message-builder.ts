@@ -5,6 +5,7 @@ import { Config, Enhancer, SearchEngineName, Searcher as SearcherResult } from '
 
 const logger = new Logger('sauce-aggregator:message-builder');
 
+// 根据图源名称和结果内容生成一个唯一的ID，用于防止重复增强
 function getEnhancementId(enhancerName: string, result: SearcherResult.Result): string | null {
     const patterns = {
         pixiv: /illust_id=(\d+)|artworks\/(\d+)/,
@@ -16,22 +17,17 @@ function getEnhancementId(enhancerName: string, result: SearcherResult.Result): 
     if (!regex) return null;
 
     const match = result.url.match(regex) || result.details?.join(' ').match(regex);
-    if (match) {
-        // Return the first captured group that is not undefined
-        return `${enhancerName}:${match[1] || match[2]}`;
-    }
-    return null;
+    return match ? `${enhancerName}:${match[1] || match[2]}` : null;
 }
 
+// 创建包含缩略图和文本描述的基础消息内容
 export async function createResultContent(ctx: Context, result: SearcherResult.Result, engineName?: SearchEngineName): Promise<h[]> {
-    // FIX: Dynamically set the author label based on the engine
     const authorLabel = engineName === 'tracemoe' ? '工作室' : '作者';
     
     const textFields = [
       engineName ? `引擎: ${engineName}` : null,
       result.similarity ? `相似度: ${result.similarity.toFixed(2)}%` : null,
       result.source ? `来源: ${result.source}` : null,
-      // Use the dynamic label here
       result.author ? `${authorLabel}: ${result.author}` : null,
       result.time ? `时间: ${result.time}` : null,
       ...(result.details || []),
@@ -51,7 +47,8 @@ export async function createResultContent(ctx: Context, result: SearcherResult.R
     }
 }
 
-export async function buildLowConfidenceNode(ctx: Context, result: SearcherResult.Result, engineName: SearchEngineName, botUser) {
+// 构建用于合并转发的低相似度结果消息节点
+export async function buildLowConfidenceNode(ctx: Context, result: SearcherResult.Result, engineName: SearchEngineName, botUser: any) {
   const content = await createResultContent(ctx, result, engineName);
   return h('message', { 
       nickname: (result.source || engineName).substring(0, 10),
@@ -59,6 +56,7 @@ export async function buildLowConfidenceNode(ctx: Context, result: SearcherResul
   }, content);
 }
 
+// 构建包含图源增强信息的高相似度结果消息节点
 export async function buildHighConfidenceMessage(
     figureMessage: h,
     ctx: Context,
@@ -66,14 +64,13 @@ export async function buildHighConfidenceMessage(
     sortedEnhancers: Enhancer[],
     result: SearcherResult.Result,
     engineName: SearchEngineName,
-    botUser,
+    botUser: any,
     processedEnhancements: Set<string>,
 ) {
   if (result.coverImage) {
     figureMessage.children.push(h('message', { nickname: '番剧封面', avatar: botUser.avatar }, h.image(result.coverImage)));
   }
   
-  // Pass engineName to generate content with the correct label
   const formattedContent = await createResultContent(ctx, result, engineName);
   const detailsNode = h('message', { nickname: '详细信息', avatar: botUser.avatar }, formattedContent);
   figureMessage.children.push(detailsNode);
@@ -90,19 +87,16 @@ export async function buildHighConfidenceMessage(
   
   for (const enhancer of sortedEnhancers) {
     const enhancementId = getEnhancementId(enhancer.name, result);
-    if (enhancementId) {
-        if (processedEnhancements.has(enhancementId)) {
-            if (config.debug.enabled) logger.info(`[Enhancer] 跳过重复的图源处理: ${enhancementId}`);
-            continue; // Skip this enhancer as it has been processed
-        }
+    if (enhancementId && processedEnhancements.has(enhancementId)) {
+        if (config.debug.enabled) logger.info(`[增强器] 跳过重复的图源处理: ${enhancementId}`);
+        continue;
     }
 
     try {
       const enhancedData = await enhancer.enhance(result);
       if (enhancedData) {
         if (config.debug.enabled) logger.info(`[${enhancer.name}] 已成功获取图源信息。`);
-        
-        if(enhancementId) processedEnhancements.add(enhancementId);
+        if (enhancementId) processedEnhancements.add(enhancementId);
 
         if (enhancedData.imageBuffer) {
             figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))
@@ -114,7 +108,7 @@ export async function buildHighConfidenceMessage(
             figureMessage.children.push(...enhancedData.additionalImages);
         }
         
-        break; // Stop after the first successful enhancement
+        break;
       }
     } catch (e) {
         logger.warn(`[${enhancer.name}] 图源处理时发生错误:`, e);
@@ -122,7 +116,8 @@ export async function buildHighConfidenceMessage(
   }
 }
 
-export async function sendFigureMessage(session, figureMessage: h, errorMessage: string) {
+// 安全地发送 figure 消息，并在失败时提供回退
+export async function sendFigureMessage(session: any, figureMessage: h, errorMessage: string) {
     if (figureMessage.children.length > 0) {
         try {
             await session.send(figureMessage);

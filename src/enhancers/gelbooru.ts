@@ -1,9 +1,10 @@
 // --- START OF FILE src/enhancers/gelbooru.ts ---
 import { Context, Logger, h } from 'koishi'
-import { Gelbooru as GelbooruConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
+import { Config, Gelbooru as GelbooruConfig, Enhancer, EnhancedResult, Searcher } from '../config'
 import { USER_AGENT, getImageTypeFromUrl, downloadWithRetry } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
+const GELBOORU_URL_REGEX = /(https?:\/\/gelbooru\.com\/index\.php\?[^"\s]*(id=\d+|md5=[a-f0-f0-9]{32}))/;
 
 interface GelbooruPost {
   id: number
@@ -29,17 +30,13 @@ interface GelbooruResponse {
     }
 }
 
-
+// Gelbooru 图源增强器
 export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
   public readonly name: 'gelbooru' = 'gelbooru';
-  private timeout: number;
-  private retries: number;
   
-  constructor(public ctx: Context, public config: GelbooruConfig.Config, public debugConfig: DebugConfig, requestTimeout: number, enhancerRetryCount: number) {
-      this.timeout = requestTimeout * 1000;
-      this.retries = enhancerRetryCount;
-  }
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: GelbooruConfig.Config) {}
 
+  // 增强单个搜索结果，获取 Gelbooru 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
     const gelbooruUrl = this.findGelbooruUrl(result);
     if (!gelbooruUrl) return null;
@@ -48,64 +45,57 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
     const postMd5 = this.parseParam(gelbooruUrl, 'md5');
 
     if (!postId && !postMd5) {
-      if (this.debugConfig.enabled) logger.info(`[gelbooru] 在链接 ${gelbooruUrl} 中未找到有效的 id 或 md5 参数。`);
+      if (this.mainConfig.debug.enabled) logger.info(`[gelbooru] 在链接 ${gelbooruUrl} 中未找到有效的 id 或 md5 参数。`);
       return null;
     }
     
     const logIdentifier = postId ? `ID: ${postId}` : `MD5: ${postMd5}`;
-    if (this.debugConfig.enabled) logger.info(`[gelbooru] 检测到 Gelbooru 链接，${logIdentifier}，开始获取图源信息...`);
+    if (this.mainConfig.debug.enabled) logger.info(`[gelbooru] 检测到 Gelbooru 链接 (${logIdentifier})，开始获取图源信息...`);
 
     try {
-      const keyPair = this.config.keyPairs[Math.floor(Math.random() * this.config.keyPairs.length)];
-      const apiUrl = 'https://gelbooru.com/index.php';
+      const keyPairs = this.subConfig.keyPairs || [];
+      const keyPair = keyPairs.length > 0 ? keyPairs[Math.floor(Math.random() * keyPairs.length)] : null;
       
       const apiParams: Record<string, any> = {
             page: 'dapi', s: 'post', q: 'index', json: '1',
+            id: postId,
+            tags: postId ? undefined : `md5:${postMd5}`,
       };
-
-      if (keyPair && keyPair.apiKey && keyPair.userId) {
+      if (keyPair?.apiKey && keyPair?.userId) {
           apiParams.api_key = keyPair.apiKey;
           apiParams.user_id = keyPair.userId;
       }
-
-      if (postId) {
-        apiParams.id = postId;
-      } else {
-        apiParams.tags = `md5:${postMd5}`;
-      }
       
-      const response = await this.ctx.http.get<GelbooruResponse>(apiUrl, {
-        headers: {
-            'User-Agent': USER_AGENT
-        },
+      const response = await this.ctx.http.get<GelbooruResponse>('https://gelbooru.com/index.php', {
+        headers: { 'User-Agent': USER_AGENT },
         params: apiParams,
-        timeout: this.timeout,
+        timeout: this.mainConfig.requestTimeout * 1000,
       });
       
-      if (this.debugConfig.logApiResponses.includes(this.name)) {
+      if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info(`[gelbooru] API 响应: ${JSON.stringify(response, null, 2)}`);
       }
       
       const post = response?.post?.[0];
 
       if (!post || !post.id) {
-        if (this.debugConfig.enabled) logger.warn(`[gelbooru] API 未能找到帖子 (${logIdentifier})。`);
+        if (this.mainConfig.debug.enabled) logger.warn(`[gelbooru] API 未能找到帖子 (${logIdentifier})。`);
         return null;
       }
       
       const ratingHierarchy = { general: 1, sensitive: 2, questionable: 3, explicit: 4 };
       const postRatingLevel = ratingHierarchy[post.rating];
-      const maxAllowedLevel = ratingHierarchy[this.config.maxRating];
+      const maxAllowedLevel = ratingHierarchy[this.subConfig.maxRating];
 
       if (postRatingLevel > maxAllowedLevel) {
-        if (this.debugConfig.enabled) logger.info(`[gelbooru] 帖子 ${post.id} 的评级 '${post.rating}' 超出设置 '${this.config.maxRating}'，已跳过。`);
+        if (this.mainConfig.debug.enabled) logger.info(`[gelbooru] 帖子 ${post.id} 的评级 '${post.rating}' 超出设置 '${this.subConfig.maxRating}'，已跳过。`);
         return { details: [h.text(`[!] Gelbooru 图源的评级 (${post.rating}) 超出设置，已隐藏详情。`)] };
       }
 
       const details = this.buildDetailNodes(post);
 
       let downloadUrl: string;
-      switch(this.config.postQuality) {
+      switch(this.subConfig.postQuality) {
         case 'original': downloadUrl = post.file_url; break;
         case 'sample': downloadUrl = post.sample_url; break;
         case 'preview': downloadUrl = post.preview_url; break;
@@ -113,19 +103,19 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
       }
       
       if (!downloadUrl) {
-         if (this.debugConfig.enabled) logger.warn(`[gelbooru] 帖子 ${post.id} 缺少 ${this.config.postQuality} 质量的图片URL，将尝试使用 sample_url。`);
+         if (this.mainConfig.debug.enabled) logger.warn(`[gelbooru] 帖子 ${post.id} 缺少 ${this.subConfig.postQuality} 质量的图片URL，将尝试使用 sample_url。`);
          downloadUrl = post.sample_url;
       }
        if (!downloadUrl) {
-         if (this.debugConfig.enabled) logger.warn(`[gelbooru] 帖子 ${post.id} 缺少任何可用的图片URL。`);
+         if (this.mainConfig.debug.enabled) logger.warn(`[gelbooru] 帖子 ${post.id} 缺少任何可用的图片URL。`);
         return { details };
       }
 
-      if (this.debugConfig.enabled) logger.info(`[gelbooru] 正在下载图源图片 (${this.config.postQuality} 质量)... URL: ${downloadUrl}`);
+      if (this.mainConfig.debug.enabled) logger.info(`[gelbooru] 正在下载图源图片 (${this.subConfig.postQuality} 质量)... URL: ${downloadUrl}`);
 
       const imageBuffer = await downloadWithRetry(this.ctx, downloadUrl, {
-          retries: this.retries,
-          timeout: this.timeout
+          retries: this.mainConfig.enhancerRetryCount,
+          timeout: this.mainConfig.requestTimeout * 1000,
       });
       const imageType = getImageTypeFromUrl(downloadUrl);
 
@@ -136,23 +126,25 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
     }
   }
 
+  // 从结果中查找有效的 Gelbooru 链接
   private findGelbooruUrl(result: Searcher.Result): string | null {
-    const urlRegex = /(https?:\/\/gelbooru\.com\/index\.php\?[^"\s]*(id=\d+|md5=[a-f0-f0-9]{32}))/;
-    if (result.url && urlRegex.test(result.url)) return result.url;
+    if (result.url && GELBOORU_URL_REGEX.test(result.url)) return result.url;
     if (result.details) {
       for (const detail of result.details) {
-        const match = String(detail).match(urlRegex);
+        const match = String(detail).match(GELBOORU_URL_REGEX);
         if (match) return match[0];
       }
     }
     return null;
   }
 
+  // 从 Gelbooru 链接中解析查询参数
   private parseParam(url: string, param: string): string | null {
     const match = url.match(new RegExp(`[?&]${param}=([^&]*)`));
     return match ? match[1] : null;
   }
 
+  // 构建展示给用户的详细信息元素
   private buildDetailNodes(post: GelbooruPost): h[] {
     const info: string[] = [];
     info.push(`Gelbooru (ID: ${post.id})`);
@@ -181,3 +173,4 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+// --- END OF FILE src/enhancers/gelbooru.ts ---

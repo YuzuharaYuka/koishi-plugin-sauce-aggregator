@@ -1,6 +1,6 @@
 // --- START OF FILE src/enhancers/pixiv.ts ---
 import { Context, Logger, h } from 'koishi'
-import { Pixiv as PixivConfig, Enhancer, EnhancedResult, Searcher, DebugConfig } from '../config'
+import { Config, Pixiv as PixivConfig, Enhancer, EnhancedResult, Searcher } from '../config'
 import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
@@ -17,7 +17,7 @@ interface PixivIllust {
   create_date: string;
   width: number;
   height: number;
-  x_restrict: number; // 0 for all ages, 1 for R-18, 2 for R-18G
+  x_restrict: number; // 0: all-age, 1: R-18, 2: R-18G
   meta_single_page: {
     original_image_url?: string;
   };
@@ -31,11 +31,12 @@ interface PixivIllust {
   page_count: number;
 }
 
+// 封装了 Pixiv API 的请求逻辑，包括 AccessToken 的自动刷新
 class PixivApiService {
   private accessToken: string | null = null;
   private readonly headers: Record<string, string>;
   
-  constructor(private ctx: Context, private config: PixivConfig.Config, private debugConfig: DebugConfig, private requestTimeout: number, private retries: number) {
+  constructor(private ctx: Context, private mainConfig: Config, private subConfig: PixivConfig.Config) {
     this.headers = {
       'app-os': 'ios',
       'app-os-version': '14.6',
@@ -47,19 +48,19 @@ class PixivApiService {
   private async _refreshAccessToken(): Promise<boolean> {
     const data = new URLSearchParams({
       'grant_type': 'refresh_token',
-      'client_id': this.config.clientId,
-      'client_secret': this.config.clientSecret,
-      'refresh_token': this.config.refreshToken,
+      'client_id': this.subConfig.clientId,
+      'client_secret': this.subConfig.clientSecret,
+      'refresh_token': this.subConfig.refreshToken,
       'get_secure_url': 'true',
     }).toString();
     try {
       const response = await this.ctx.http.post('https://oauth.secure.pixiv.net/auth/token', data, {
         headers: { ...this.headers, 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: this.requestTimeout,
+        timeout: this.mainConfig.requestTimeout * 1000,
       });
       if (response.access_token) {
         this.accessToken = response.access_token;
-        if (this.debugConfig.enabled) logger.info('[pixiv] AccessToken 刷新成功。');
+        if (this.mainConfig.debug.enabled) logger.info('[pixiv] AccessToken 刷新成功。');
         return true;
       }
       return false;
@@ -79,14 +80,14 @@ class PixivApiService {
     const makeRequest = () => this.ctx.http.get(url, {
       params,
       headers: { ...this.headers, 'Authorization': `Bearer ${this.accessToken}` },
-      timeout: this.requestTimeout,
+      timeout: this.mainConfig.requestTimeout * 1000,
     });
     try {
       return await makeRequest();
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || '';
       if (error.response?.status === 400 && /invalid_grant|invalid_token/i.test(errorMsg)) {
-        if (this.debugConfig.enabled) logger.info('[pixiv] AccessToken 已失效，尝试强制刷新...');
+        if (this.mainConfig.debug.enabled) logger.info('[pixiv] AccessToken 已失效，尝试强制刷新...');
         if (await this._refreshAccessToken()) {
           return await makeRequest();
         }
@@ -95,38 +96,41 @@ class PixivApiService {
     }
   }
   
+  // 获取作品详情
   public async getArtworkDetail(pid: string): Promise<PixivIllust | null> {
     try {
       const response = await this._request(`https://app-api.pixiv.net/v1/illust/detail`, { illust_id: pid, filter: 'for_ios' });
       return response.illust;
     } catch (error) {
-      if (this.debugConfig.enabled) logger.warn(`[pixiv] 获取插画详情失败 (PID: ${pid}):`, error.response?.data || error.message);
+      if (this.mainConfig.debug.enabled) logger.warn(`[pixiv] 获取插画详情失败 (PID: ${pid}):`, error.response?.data || error.message);
       return null;
     }
   }
 
+  // 下载图片
   public async downloadImage(url: string): Promise<Buffer | null> {
     try {
       return await downloadWithRetry(this.ctx, url, {
-          retries: this.retries,
-          timeout: this.requestTimeout,
+          retries: this.mainConfig.enhancerRetryCount,
+          timeout: this.mainConfig.requestTimeout * 1000,
           headers: { 'Referer': 'https://www.pixiv.net/' }
       });
     } catch (error) {
-      // The error is already logged by downloadWithRetry, so just return null
       return null;
     }
   }
 }
 
+// Pixiv 图源增强器
 export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
   public readonly name: 'pixiv' = 'pixiv';
   private api: PixivApiService;
   
-  constructor(public ctx: Context, public config: PixivConfig.Config, public debugConfig: DebugConfig, requestTimeout: number, enhancerRetryCount: number) {
-      this.api = new PixivApiService(ctx, config, debugConfig, requestTimeout * 1000, enhancerRetryCount);
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: PixivConfig.Config) {
+      this.api = new PixivApiService(ctx, mainConfig, subConfig);
   }
 
+  // 增强单个搜索结果，获取 Pixiv 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
     const pixivUrl = this.findPixivUrl(result);
     if (!pixivUrl) return null;
@@ -134,22 +138,22 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
     const postId = this.parsePostId(pixivUrl);
     if (!postId) return null;
 
-    if (this.debugConfig.enabled) logger.info(`[pixiv] 检测到 Pixiv 链接 (来自 ${pixivUrl})，帖子 ID: ${postId}，开始获取图源信息...`);
+    if (this.mainConfig.debug.enabled) logger.info(`[pixiv] 检测到 Pixiv 链接 (来自 ${pixivUrl})，帖子 ID: ${postId}，开始获取图源信息...`);
     
     try {
       const illust = await this.api.getArtworkDetail(postId);
       if (!illust) {
-        if (this.debugConfig.enabled) logger.warn(`[pixiv] API 未能找到 ID 为 ${postId} 的帖子。`);
+        if (this.mainConfig.debug.enabled) logger.warn(`[pixiv] API 未能找到 ID 为 ${postId} 的帖子。`);
         return null;
       }
 
-      if (this.debugConfig.logApiResponses.includes(this.name)) {
+      if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info(`[pixiv] API 响应: ${JSON.stringify(illust, null, 2)}`);
       }
 
       const isR18 = illust.x_restrict > 0;
-      if (isR18 && !this.config.allowR18) {
-        if (this.debugConfig.enabled) logger.info(`[pixiv] 帖子 ${postId} 是 R-18 内容，但配置不允许发送，已跳过。`);
+      if (isR18 && !this.subConfig.allowR18) {
+        if (this.mainConfig.debug.enabled) logger.info(`[pixiv] 帖子 ${postId} 是 R-18 内容，但配置不允许发送，已跳过。`);
         return { details: [h.text(`[!] Pixiv 图源的评级为 R-18，根据设置已隐藏详情。`)] };
       }
       
@@ -160,25 +164,18 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
       const additionalImages: h[] = [];
       const botUser = await this.ctx.bots[0]?.getSelf();
 
-      const pages = illust.meta_pages?.length > 0 ? illust.meta_pages : [{ image_urls: { original: illust.meta_single_page.original_image_url, large: illust.meta_single_page.original_image_url, medium: illust.meta_single_page.original_image_url } }];
-      const imagesToFetch = this.config.maxImagesInPost === 0 ? pages : pages.slice(0, this.config.maxImagesInPost);
+      const pages = illust.meta_pages?.length > 0
+        ? illust.meta_pages
+        : [{ image_urls: { original: illust.meta_single_page.original_image_url, large: illust.meta_single_page.original_image_url, medium: illust.meta_single_page.original_image_url } }];
+      const imagesToFetch = this.subConfig.maxImagesInPost === 0 ? pages : pages.slice(0, this.subConfig.maxImagesInPost);
 
-      for (let i = 0; i < imagesToFetch.length; i++) {
-        const page = imagesToFetch[i];
-        let downloadUrl: string;
-
-        switch(this.config.postQuality) {
-            case 'original': downloadUrl = page.image_urls.original; break;
-            case 'large': downloadUrl = page.image_urls.large; break;
-            case 'medium': downloadUrl = page.image_urls.medium; break;
-            default: downloadUrl = page.image_urls.large; break;
-        }
-
-        if (!downloadUrl) continue;
+      for (const [i, page] of imagesToFetch.entries()) {
+        const qualityUrl = page.image_urls[this.subConfig.postQuality] || page.image_urls.large;
+        if (!qualityUrl) continue;
         
-        if (this.debugConfig.enabled) logger.info(`[pixiv] 正在下载图源图片 (P${i+1}, ${this.config.postQuality} 质量)... URL: ${downloadUrl}`);
-        const imageBuffer = await this.api.downloadImage(downloadUrl);
-        const imageType = getImageTypeFromUrl(downloadUrl);
+        if (this.mainConfig.debug.enabled) logger.info(`[pixiv] 正在下载图源图片 (P${i+1}, ${this.subConfig.postQuality} 质量)... URL: ${qualityUrl}`);
+        const imageBuffer = await this.api.downloadImage(qualityUrl);
+        const imageType = getImageTypeFromUrl(qualityUrl);
 
         if (!imageBuffer) continue;
 
@@ -191,7 +188,7 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
       }
       
       if (!firstImageBuffer) {
-        if (this.debugConfig.enabled) logger.warn(`[pixiv] 帖子 ${postId} 的主图片下载失败。`);
+        if (this.mainConfig.debug.enabled) logger.warn(`[pixiv] 帖子 ${postId} 的主图片下载失败。`);
         return { details };
       }
 
@@ -202,6 +199,7 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
     }
   }
 
+  // 从结果中查找有效的 Pixiv 链接
   private findPixivUrl(result: Searcher.Result): string | null {
     const urlRegex = /(https?:\/\/(?:www\.)?pixiv\.net\/(?:en\/)?(?:artworks\/\d+|member_illust\.php\?.*illust_id=\d+)|i\.pximg\.net\/[^\s"]+)/;
     
@@ -216,19 +214,23 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
     return null;
   }
 
+  // 从多种 Pixiv 链接格式中解析作品 ID
   private parsePostId(url: string): string | null {
-    let match = url.match(/artworks\/(\d+)/);
-    if (match) return match[1];
-    
-    match = url.match(/illust_id=(\d+)/);
-    if (match) return match[1];
+    const patterns = [
+        /artworks\/(?<id>\d+)/,
+        /illust_id=(?<id>\d+)/,
+        /\/(?<id>\d+)(?:_p\d+)?(?:\.\w+)?$/,
+    ];
 
-    match = url.match(/\/(\d+)(?:_p\d+)?(?:\.\w+)?$/);
-    if (match) return match[1];
+    for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match?.groups?.id) return match.groups.id;
+    }
 
     return null;
   }
 
+  // 构建展示给用户的详细信息元素
   private buildDetailNodes(illust: PixivIllust): h[] {
     const info: string[] = [];
     info.push(`Pixiv (ID: ${illust.id})`);
@@ -260,3 +262,4 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+// --- END OF FILE src/enhancers/pixiv.ts ---

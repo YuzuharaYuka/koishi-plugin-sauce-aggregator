@@ -1,151 +1,99 @@
 // --- START OF FILE src/searchers/yandex.ts ---
 import { Context, Logger } from 'koishi'
-import { Searcher, SearchOptions, Yandex as YandexConfig, DebugConfig, SearchEngineName } from '../config'
+import { Config, Searcher, SearchOptions, Yandex as YandexConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
 import { promises as fs } from 'fs';
 import path from 'path';
+import type { Page } from 'puppeteer-core';
 
 const logger = new Logger('sauce-aggregator')
 
+// Yandex 搜图引擎实现
 export class Yandex implements Searcher<YandexConfig.Config> {
   public readonly name: SearchEngineName = 'yandex';
   private puppeteer: PuppeteerManager;
   
-  constructor(public ctx: Context, public config: YandexConfig.Config, public debugConfig: DebugConfig, puppeteerManager: PuppeteerManager) {
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: YandexConfig.Config, puppeteerManager: PuppeteerManager) {
     this.puppeteer = puppeteerManager;
   }
 
+  // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const page = await this.puppeteer.getPage();
     const tempFilePath = path.resolve(this.ctx.baseDir, 'temp', `sauce-aggregator-yandex-${Date.now()}-${options.fileName}`);
     let tempFileCreated = false;
 
     try {
-      const url = `https://${this.config.domain}/images/`
-      if (this.debugConfig.enabled) logger.info(`[yandex] 导航到: ${url}`);
-      // --- THIS IS THE FIX ---: Use a faster navigation strategy.
+      // 导航到 Yandex 图片
+      const url = `https://${this.subConfig.domain}/images/`
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] 导航到: ${url}`);
       await page.goto(url, { waitUntil: 'domcontentloaded' });
       
-      const cookiePopupSelector = '.gdpr-popup-v3-main';
-      const allowAllButtonSelector = '#gdpr-popup-v3-button-all';
+      // 处理可能出现的 Cookie 弹窗
       try {
-        if (this.debugConfig.enabled) logger.info(`[yandex] 检查 Cookie 弹窗...`);
+        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检查 Cookie 弹窗...`);
+        const cookiePopupSelector = '.gdpr-popup-v3-main';
         await page.waitForSelector(cookiePopupSelector, { visible: true, timeout: 5000 });
-        if (this.debugConfig.enabled) logger.info(`[yandex] 检测到 Cookie 弹窗，点击 "Allow all"...`);
-        await page.click(allowAllButtonSelector);
+        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检测到 Cookie 弹窗，点击接受...`);
+        await page.click('#gdpr-popup-v3-button-all');
         await page.waitForSelector(cookiePopupSelector, { hidden: true, timeout: 3000 });
-        if (this.debugConfig.enabled) logger.info(`[yandex] Cookie 弹窗已处理。`);
       } catch (e) {
-        if (this.debugConfig.enabled) logger.info(`[yandex] 未检测到 Cookie 弹窗，或弹窗处理超时，继续执行。`);
+        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 未检测到 Cookie 弹窗，继续执行。`);
       }
 
+      // 尝试点击相机图标打开上传面板，包含重试逻辑
       const cameraButtonSelector = '.HeaderDesktopActions-CbirButton';
       const uploadPanelSelector = '.CbirPanel-Popup';
-      const selectFileButtonSelector = '.CbirPanel-FileControlsButton';
-      
       let uploadPanelVisible = false;
-      const maxRetries = 3;
-      for (let i = 0; i < maxRetries; i++) {
+      for (let i = 0; i < 3; i++) {
           try {
-              if (this.debugConfig.enabled) logger.info(`[yandex] 等待相机图标可见 (尝试 ${i + 1}/${maxRetries})...`);
-              const cameraButton = await page.waitForSelector(cameraButtonSelector, { visible: true, timeout: 10000 });
-              
-              if (this.debugConfig.enabled) logger.info(`[yandex] 点击相机图标...`);
-              await cameraButton.click();
-
-              if (this.debugConfig.enabled) logger.info(`[yandex] 等待上传面板出现...`);
+              if (this.mainConfig.debug.enabled) logger.info(`[yandex] 等待并点击相机图标 (尝试 ${i + 1}/3)...`);
+              await page.waitForSelector(cameraButtonSelector, { visible: true, timeout: 10000 });
+              await page.click(cameraButtonSelector);
               await page.waitForSelector(uploadPanelSelector, { visible: true, timeout: 5000 });
-
               uploadPanelVisible = true;
               break;
           } catch (e) {
-              if (this.debugConfig.enabled) logger.warn(`[yandex] 第 ${i + 1} 次点击未能打开上传面板: ${e.message}`);
-              if (i < maxRetries - 1) {
-                  // Reload using a more lenient condition as well
-                  await page.reload({ waitUntil: 'domcontentloaded' });
-              }
+              if (this.mainConfig.debug.enabled) logger.warn(`[yandex] 第 ${i + 1} 次点击未能打开上传面板: ${e.message}`);
+              if (i < 2) await page.reload({ waitUntil: 'domcontentloaded' });
           }
       }
+      if (!uploadPanelVisible) throw new Error(`点击相机图标 3 次后，仍未能打开上传面板。`);
 
-      if (!uploadPanelVisible) {
-          throw new Error(`点击相机图标 ${maxRetries} 次后，仍未能打开上传面板。`);
-      }
-
+      // 上传图片文件
       await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
       await fs.writeFile(tempFilePath, options.imageBuffer);
       tempFileCreated = true;
-      if (this.debugConfig.enabled) logger.info(`[yandex] 临时文件已创建: ${tempFilePath}`);
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] 临时文件已创建: ${tempFilePath}`);
       
       const fileChooserPromise = page.waitForFileChooser();
-
-      if (this.debugConfig.enabled) logger.info(`[yandex] 等待“选择文件”按钮...`);
-      const selectFileButton = await page.waitForSelector(selectFileButtonSelector);
-      
-      if (this.debugConfig.enabled) logger.info(`[yandex] 点击“选择文件”按钮...`);
-      await selectFileButton.click();
+      const selectFileButtonSelector = '.CbirPanel-FileControlsButton';
+      await page.waitForSelector(selectFileButtonSelector);
+      await page.click(selectFileButtonSelector);
       
       const fileChooser = await fileChooserPromise;
       await fileChooser.accept([tempFilePath]);
-      if (this.debugConfig.enabled) logger.info(`[yandex] 文件已通过选择器提交。`);
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] 文件已提交。`);
 
-      if (this.debugConfig.enabled) logger.info(`[yandex] 等待结果元素出现...`);
-      const firstResultSelector = '.CbirSites-Item';
-      await page.waitForSelector(firstResultSelector, { timeout: this.ctx.root.config.requestTimeout * 1000 });
+      // 等待并解析结果
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] 等待结果元素出现...`);
+      await page.waitForSelector('.CbirSites-Item', { timeout: this.mainConfig.requestTimeout * 1000 });
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] 结果已加载，正在解析...`);
 
-      if (this.debugConfig.enabled) logger.info(`[yandex] 结果已加载，正在浏览器端解析...`);
-      
-      if (this.debugConfig.logApiResponses.includes(this.name)) {
+      if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         const html = await page.content();
         logger.info({ '[yandex] Raw HTML Response': html });
       }
-
-      const results = await page.$$eval(
-        '.CbirSites-Item',
-        (items, maxResults) => {
-          const parsedResults = [];
-          for (const item of items.slice(0, maxResults)) {
-            const thumbElement = item.querySelector('.CbirSites-ItemThumb img') as HTMLImageElement;
-            const titleElement = item.querySelector('.CbirSites-ItemTitle a') as HTMLAnchorElement;
-            const domainElement = item.querySelector('.CbirSites-ItemDomain') as HTMLAnchorElement;
-            const sizeElement = item.querySelector('.Thumb-Mark');
-
-            if (!thumbElement || !titleElement) continue;
-            
-            let thumbnailUrl = thumbElement.src;
-            if (thumbnailUrl.startsWith('//')) {
-                thumbnailUrl = 'https:' + thumbnailUrl;
-            }
-
-            const details = [];
-            if (sizeElement) {
-                details.push(`尺寸: ${sizeElement.textContent.trim()}`);
-            }
-
-            parsedResults.push({
-              thumbnail: thumbnailUrl,
-              similarity: 0,
-              url: titleElement.href,
-              source: domainElement?.textContent.trim() || '未知来源',
-              details: [
-                  `标题: ${titleElement.textContent.trim()}`,
-                  ...details
-              ],
-            });
-          }
-          return parsedResults;
-        },
-        options.maxResults
-      );
-
-      if (this.debugConfig.enabled) logger.info(`[yandex] 成功解析到 ${results.length} 个结果。`);
+      
+      const results = await this._parseResults(page, options.maxResults);
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] 成功解析到 ${results.length} 个结果。`);
       return results;
 
     } catch (error) {
       logger.warn(`[yandex] 请求或解析出错: ${error.message}`);
-      if (this.debugConfig.enabled) {
+      if (this.mainConfig.debug.enabled) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }
-      if (this.debugConfig.enabled) logger.debug(`[yandex] 错误详情:`, error);
       throw new Error(`请求 Yandex 失败: ${error.message}`);
     } finally {
         if (page && !page.isClosed()) await page.close();
@@ -155,6 +103,47 @@ export class Yandex implements Searcher<YandexConfig.Config> {
             } catch {}
         }
     }
+  }
+
+  // 解析结果页面
+  private async _parseResults(page: Page, maxResults: number): Promise<Searcher.Result[]> {
+    return page.$$eval(
+      '.CbirSites-Item',
+      (items, max) => {
+        const parsedResults = [];
+        for (const item of items.slice(0, max)) {
+          const thumbElement = item.querySelector('.CbirSites-ItemThumb img') as HTMLImageElement;
+          const titleElement = item.querySelector('.CbirSites-ItemTitle a') as HTMLAnchorElement;
+          const domainElement = item.querySelector('.CbirSites-ItemDomain') as HTMLAnchorElement;
+          const sizeElement = item.querySelector('.Thumb-Mark');
+
+          if (!thumbElement || !titleElement) continue;
+          
+          let thumbnailUrl = thumbElement.src;
+          if (thumbnailUrl.startsWith('//')) {
+              thumbnailUrl = 'https:' + thumbnailUrl;
+          }
+
+          const details = [];
+          if (sizeElement) {
+              details.push(`尺寸: ${sizeElement.textContent.trim()}`);
+          }
+
+          parsedResults.push({
+            thumbnail: thumbnailUrl,
+            similarity: 0,
+            url: titleElement.href,
+            source: domainElement?.textContent?.trim() || '未知来源',
+            details: [
+                `标题: ${titleElement.textContent.trim()}`,
+                ...details
+            ],
+          });
+        }
+        return parsedResults;
+      },
+      maxResults
+    );
   }
 }
 // --- END OF FILE src/searchers/yandex.ts ---
