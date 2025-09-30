@@ -1,0 +1,61 @@
+name: Bug Report 🐞
+description: 报告一个帮助我们改进的 Bug 或问题。
+title: '[BUG] 简短描述您的问题'
+labels: ['bug', 'triage'] # 自动添加的标签
+assignees: [] # 自动分配给谁 (例如: ['your-github-username'])
+
+body:
+  # -------------------- 必选检查项 --------------------
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 检查列表
+      description: 请确认以下事项以帮助我们更快地处理。
+      options:
+        - label: 我已经搜索了现有的 Issue，没有发现重复的问题。
+          required: true # 设为 true 意味着用户必须勾选才能提交
+        - label: 我已确认这不是一个**使用问题**，而是一个**代码缺陷**。
+          required: true
+        - label: 我已尝试使用最新版本重现问题。
+          required: false
+  
+  # -------------------- 环境下拉菜单 --------------------
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      description: 您的系统环境是什么？
+      options: # 下拉菜单的选项
+        - Windows
+        - macOS
+        - Linux
+        - Android
+        - iOS
+      default: 0 # 默认选中第一个 (Windows)
+    validations:
+      required: true
+
+  # -------------------- 文本输入框 (复现步骤) --------------------
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请提供详细的复现步骤，例如：
+        | 1. Go to '...'
+        | 2. Click on '....'
+        | 3. Scroll down to '....'
+        | 4. See error
+      placeholder: 请提供详细的步骤，包括任何相关的代码片段。
+      render: markdown # 允许用户在文本框内使用 Markdown
+    validations:
+      required: true
+      
+  # -------------------- 附加信息 --------------------
+  - type: textarea
+    id: context
+    attributes:
+      label: 额外上下文
+      description: 您可以添加任何其他关于问题或环境的上下文信息。
+      render: markdown
+    validations:
+      required: false
