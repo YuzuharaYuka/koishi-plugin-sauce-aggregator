@@ -1,61 +1,84 @@
-name: Bug Report 🐞
-description: 报告一个帮助我们改进的 Bug 或问题。
-title: '[BUG] 简短描述您的问题'
-labels: ['bug', 'triage'] # 自动添加的标签
-assignees: [] # 自动分配给谁 (例如: ['your-github-username'])
+name: Bug Report
+description: 报告插件中的缺陷，帮助我改进。
+title: '[BUG] 简短描述问题'
+labels: ['bug', 'needs-triage']
 
 body:
-  # -------------------- 必选检查项 --------------------
   - type: checkboxes
     id: checklist
     attributes:
       label: 检查列表
-      description: 请确认以下事项以帮助我们更快地处理。
+      description: 请确认以下事项。
       options:
-        - label: 我已经搜索了现有的 Issue，没有发现重复的问题。
-          required: true # 设为 true 意味着用户必须勾选才能提交
-        - label: 我已确认这不是一个**使用问题**，而是一个**代码缺陷**。
+        - label: 我已搜索现有的 Issue。
           required: true
-        - label: 我已尝试使用最新版本重现问题。
-          required: false
+        - label: 我已尝试使用最新版本的插件。
+          required: true
+        - label: 我已确认这不是一个配置问题或上游服务问题。
+          required: true
   
-  # -------------------- 环境下拉菜单 --------------------
   - type: dropdown
-    id: os
+    id: koishi_version
     attributes:
-      label: 操作系统
-      description: 您的系统环境是什么？
-      options: # 下拉菜单的选项
-        - Windows
-        - macOS
-        - Linux
-        - Android
-        - iOS
-      default: 0 # 默认选中第一个 (Windows)
+      label: Koishi 版本
+      options:
+        - Koishi v4.x
+        - Koishi v3.x
+        - 其他 (请在下方补充)
     validations:
       required: true
 
-  # -------------------- 文本输入框 (复现步骤) --------------------
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 发生问题的适配器/平台
+      options:
+        - onebot
+        - discord
+        - telegram
+        - other
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: service_affected
+    attributes:
+      label: 哪个聚合服务受影响？
+      description: (请选择导致问题的具体服务)
+      options:
+        - Saucenao
+        - Ascii2d
+        - Iqdb
+        - Trace.moe
+        - Yandex
+        - Soutubot
+        - Yande.re
+        - Gelbooru
+        - Danbooru
+        - Pixiv
+        - 全部/核心逻辑
+      multiple: true 
+    validations:
+      required: true
+
   - type: textarea
     id: reproduce
     attributes:
       label: 复现步骤
-      description: 请提供详细的复现步骤，例如：
-        | 1. Go to '...'
-        | 2. Click on '....'
-        | 3. Scroll down to '....'
-        | 4. See error
-      placeholder: 请提供详细的步骤，包括任何相关的代码片段。
-      render: markdown # 允许用户在文本框内使用 Markdown
+      description: 请详细描述如何复现这个问题 (包括您使用的命令和配置)。
+      placeholder: |
+        1. 在平台 X 上，配置服务 Y 的 API Key。
+        2. 发送命令 `sauce <图片>`。
+        3. 发生错误/结果不正确。
+      render: markdown
     validations:
       required: true
-      
-  # -------------------- 附加信息 --------------------
+
   - type: textarea
-    id: context
+    id: logs
     attributes:
-      label: 额外上下文
-      description: 您可以添加任何其他关于问题或环境的上下文信息。
+      label: 实际错误或 Koishi 日志
+      description: 请粘贴相关的错误信息、 Koishi 控制台日志或者截图快照。
       render: markdown
     validations:
       required: false
