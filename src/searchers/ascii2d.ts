@@ -18,8 +18,10 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
 
   // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
-    if (!options.imageUrl) {
-        logger.warn('[ascii2d] 此引擎需要图片 URL 才能进行搜索。');
+    // [FIX] 增加 URL 协议检查，确保只处理 HTTP/HTTPS 链接。
+    // 这是为了防止将沙盒环境中的 data: 或 blob: 等本地 URL 传给该引擎，导致搜索必然失败。
+    if (!options.imageUrl || !options.imageUrl.startsWith('http')) {
+        logger.warn('[ascii2d] 此引擎需要一个有效的 HTTP/HTTPS 图片 URL 才能进行搜索。已跳过。');
         return [];
     }
 
@@ -34,13 +36,18 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
       await page.waitForSelector(urlFormSelector);
       
       const inputSelector = `${urlFormSelector} input[name="uri"]`;
+
+      if (this.mainConfig.debug.enabled) logger.info(`[ascii2d] 正在聚焦 URL 输入框...`);
+      await page.focus(inputSelector);
+
       if (this.mainConfig.debug.enabled) logger.info(`[ascii2d] 正在输入 URL...`);
       await page.type(inputSelector, options.imageUrl);
       
       const searchButtonSelector = `${urlFormSelector} button[type="submit"]`;
       if (this.mainConfig.debug.enabled) logger.info(`[ascii2d] 点击 URL 搜索按钮...`);
+      
       await Promise.all([
-          page.waitForNavigation({ waitUntil: 'networkidle0' }).catch(() => {}),
+          page.waitForNavigation({ waitUntil: 'networkidle0' }),
           page.click(searchButtonSelector),
       ]);
       
@@ -102,4 +109,3 @@ export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
     }));
   }
 }
-// --- END OF FILE src/searchers/ascii2d.ts ---

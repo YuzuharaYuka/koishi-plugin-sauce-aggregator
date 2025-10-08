@@ -73,7 +73,9 @@ export class PuppeteerManager {
             ],
             executablePath: executablePath,
             protocolTimeout: launchTimeout,
-            timeout: this.config.requestTimeout * 1000,
+            // [FIX] 修正：使用专用的浏览器启动超时 `browserLaunchTimeout`，而非网络请求超时 `requestTimeout`。
+            // 这是为了确保浏览器进程有足够的时间完成初始化，避免后续操作因此挂起。
+            timeout: launchTimeout,
         });
 
         browser.on('disconnected', () => {
@@ -181,7 +183,7 @@ export class PuppeteerManager {
     public async saveErrorSnapshot(page: Page, contextName: string): Promise<void> {
         try {
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const logDir = path.resolve(this.ctx.baseDir, 'logs');
+            const logDir = path.resolve(this.ctx.baseDir, 'data', 'sauce-aggregator', 'logs');
             await fs.mkdir(logDir, { recursive: true });
 
             const screenshotPath = path.resolve(logDir, `${contextName}-error-${timestamp}.png`);
@@ -219,4 +221,3 @@ export class PuppeteerManager {
         }
     }
 }
-// --- END OF FILE src/puppeteer.ts ---
