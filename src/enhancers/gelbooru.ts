@@ -30,11 +30,13 @@ interface GelbooruResponse {
     }
 }
 
-// Gelbooru 图源增强器
-export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class GelbooruEnhancer extends Enhancer<GelbooruConfig.Config> {
   public readonly name: 'gelbooru' = 'gelbooru';
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: GelbooruConfig.Config) {}
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: GelbooruConfig.Config) {
+    super(ctx, mainConfig, subConfig);
+  }
 
   // 增强单个搜索结果，获取 Gelbooru 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -173,4 +175,3 @@ export class GelbooruEnhancer implements Enhancer<GelbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/gelbooru.ts ---

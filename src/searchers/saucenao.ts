@@ -8,12 +8,14 @@ const saucenaoIndexMap: Record<number, string> = {
   0: 'H-Mags', 2: 'H-Game CG', 4: 'HCG', 5: 'Pixiv', 6: 'Pixiv Historical', 8: 'Nico Nico Seiga', 9: 'Danbooru', 10: 'Drawr', 11: 'Nijie', 12: 'Yande.re', 16: 'FAKKU', 18: 'H-Misc (nhentai)', 19: '2D-Market', 20: 'MediBang', 21: 'Anime', 22: 'H-Anime', 23: 'Movies', 24: 'Shows', 25: 'Gelbooru', 26: 'Konachan', 27: 'Sankaku Channel', 28: 'Anime-Pictures', 29: 'e621', 30: 'Idol Complex', 31: 'BCY Illust', 32: 'BCY Cosplay', 33: 'PortalGraphics', 34: 'deviantArt', 35: 'Pawoo', 36: 'Madokami', 37: 'MangaDex', 38: 'H-Misc (e-hentai)', 39: 'ArtStation', 40: 'FurAffinity', 41: 'Twitter', 42: 'Furry Network', 43: 'Kemono', 44: 'Skeb',
 }
 
-// SauceNAO 搜图引擎实现
-export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
   public readonly name: SearchEngineName = 'saucenao';
   private keyIndex = 0
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: SauceNAOConfig.Config) {}
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: SauceNAOConfig.Config) {
+    super(ctx, mainConfig, subConfig);
+  }
 
   // 执行搜索，并处理 API Key 的轮换逻辑
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
@@ -142,4 +144,3 @@ export class SauceNAO implements Searcher<SauceNAOConfig.Config> {
       });
   }
 }
-// --- END OF FILE src/searchers/saucenao.ts ---

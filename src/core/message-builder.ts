@@ -1,24 +1,12 @@
 // --- START OF FILE src/core/message-builder.ts ---
 
 import { Context, h, Logger } from 'koishi';
-import { Config, Enhancer, SearchEngineName, Searcher as SearcherResult } from '../config';
+import { Config, EnhancedResult, SearchEngineName, Searcher as SearcherResult } from '../config';
 
 const logger = new Logger('sauce-aggregator:message-builder');
 
-// 根据图源名称和结果内容生成一个唯一的ID，用于防止重复增强
-function getEnhancementId(enhancerName: string, result: SearcherResult.Result): string | null {
-    const patterns = {
-        pixiv: /illust_id=(\d+)|artworks\/(\d+)/,
-        danbooru: /posts\/(\d+)/,
-        gelbooru: /id=(\d+)|md5=([a-f0-9]{32})/,
-        yandere: /post\/show\/(\d+)/,
-    };
-    const regex = patterns[enhancerName];
-    if (!regex) return null;
-
-    const match = result.url.match(regex) || result.details?.join(' ').match(regex);
-    return match ? `${enhancerName}:${match[1] || match[2]}` : null;
-}
+// [REMOVED] 增强逻辑已移至 SearchHandler 以进行并发控制。
+// getEnhancementId 已移至 SearchHandler。
 
 // 创建包含缩略图和文本描述的基础消息内容
 export async function createResultContent(ctx: Context, result: SearcherResult.Result, engineName?: SearchEngineName): Promise<h[]> {
@@ -38,9 +26,7 @@ export async function createResultContent(ctx: Context, result: SearcherResult.R
 
     try {
       const imageBuffer = Buffer.from(await ctx.http.get(result.thumbnail, { responseType: 'arraybuffer' }));
-      const imageBase64 = imageBuffer.toString('base64');
-      const dataUri = `data:image/jpeg;base64,${imageBase64}`;
-      return [h.image(dataUri), textNode];
+      return [h.image(imageBuffer, 'image/jpeg'), textNode];
     } catch (e) {
       logger.warn(`缩略图下载失败 ${result.thumbnail}:`, e.message);
       return [h('p', '[!] 缩略图加载失败'), textNode];
@@ -61,11 +47,10 @@ export async function buildHighConfidenceMessage(
     figureMessage: h,
     ctx: Context,
     config: Config,
-    sortedEnhancers: Enhancer[],
     result: SearcherResult.Result,
     engineName: SearchEngineName,
     botUser: any,
-    processedEnhancements: Set<string>,
+    enhancedData?: EnhancedResult
 ) {
   if (result.coverImage) {
     figureMessage.children.push(h('message', { nickname: '番剧封面', avatar: botUser.avatar }, h.image(result.coverImage)));
@@ -84,35 +69,18 @@ export async function buildHighConfidenceMessage(
       logger.warn(`[tracemoe] 高置信度视频预览下载失败: ${e.message}`);
     }
   }
-  
-  for (const enhancer of sortedEnhancers) {
-    const enhancementId = getEnhancementId(enhancer.name, result);
-    if (enhancementId && processedEnhancements.has(enhancementId)) {
-        if (config.debug.enabled) logger.info(`[增强器] 跳过重复的图源处理: ${enhancementId}`);
-        continue;
-    }
 
-    try {
-      const enhancedData = await enhancer.enhance(result);
-      if (enhancedData) {
-        if (config.debug.enabled) logger.info(`[${enhancer.name}] 已成功获取图源信息。`);
-        if (enhancementId) processedEnhancements.add(enhancementId);
-
-        if (enhancedData.imageBuffer) {
-            figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))
-        }
-        const enhancedDetailsNode = h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details);
-        figureMessage.children.push(enhancedDetailsNode);
-        
-        if (enhancedData.additionalImages?.length > 0) {
-            figureMessage.children.push(...enhancedData.additionalImages);
-        }
-        
-        break;
+  // [REFACTOR] 增强逻辑已移出，现在只负责渲染已增强的数据
+  if (enhancedData) {
+      if (enhancedData.imageBuffer) {
+          figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))
       }
-    } catch (e) {
-        logger.warn(`[${enhancer.name}] 图源处理时发生错误:`, e);
-    }
+      const enhancedDetailsNode = h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details);
+      figureMessage.children.push(enhancedDetailsNode);
+      
+      if (enhancedData.additionalImages?.length > 0) {
+          figureMessage.children.push(...enhancedData.additionalImages);
+      }
   }
 }
 
@@ -127,4 +95,3 @@ export async function sendFigureMessage(session: any, figureMessage: h, errorMes
         }
     }
 }
-// --- END OF FILE src/core/message-builder.ts ---

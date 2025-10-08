@@ -4,11 +4,13 @@ import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, TraceMoe as TraceMoeConfig, SearchEngineName } from '../config'
 const logger = new Logger('sauce-aggregator')
 
-// Trace.moe 搜图引擎实现
-export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
   public readonly name: SearchEngineName = 'tracemoe';
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: TraceMoeConfig.Config) {}
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: TraceMoeConfig.Config) {
+    super(ctx, mainConfig, subConfig);
+  }
 
   // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
@@ -103,4 +105,3 @@ export class TraceMoe implements Searcher<TraceMoeConfig.Config> {
     return `${h}:${m}:${s}`;
   }
 }
-// --- END OF FILE src/searchers/tracemoe.ts ---

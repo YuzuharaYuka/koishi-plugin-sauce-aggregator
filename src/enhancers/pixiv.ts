@@ -121,12 +121,13 @@ class PixivApiService {
   }
 }
 
-// Pixiv 图源增强器
-export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
   public readonly name: 'pixiv' = 'pixiv';
   private api: PixivApiService;
   
   constructor(public ctx: Context, public mainConfig: Config, public subConfig: PixivConfig.Config) {
+      super(ctx, mainConfig, subConfig);
       this.api = new PixivApiService(ctx, mainConfig, subConfig);
   }
 
@@ -262,4 +263,3 @@ export class PixivEnhancer implements Enhancer<PixivConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/pixiv.ts ---

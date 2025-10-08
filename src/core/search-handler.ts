@@ -1,15 +1,31 @@
 // --- START OF FILE src/core/search-handler.ts ---
 
 import { Context, h, Logger } from 'koishi';
-import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer } from '../config';
+import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer, EnhancedResult } from '../config';
 import * as MessageBuilder from './message-builder';
 import { Semaphore } from './semaphore';
+import { PuppeteerManager } from '../puppeteer';
 
 const logger = new Logger('sauce-aggregator:handler');
 
 type SearchOutput = { engine: SearchEngineName; results: SearcherResult.Result[]; error: string | null };
 
 const PUPPETEER_ENGINES: SearchEngineName[] = ['yandex', 'soutubot', 'ascii2d'];
+
+// 根据图源名称和结果内容生成一个唯一的ID，用于防止重复增强
+function getEnhancementId(enhancerName: string, result: SearcherResult.Result): string | null {
+    const patterns = {
+        pixiv: /illust_id=(\d+)|artworks\/(\d+)/,
+        danbooru: /posts\/(\d+)/,
+        gelbooru: /id=(\d+)|md5=([a-f0-9]{32})/,
+        yandere: /post\/show\/(\d+)/,
+    };
+    const regex = patterns[enhancerName];
+    if (!regex) return null;
+
+    const match = result.url.match(regex) || result.details?.join(' ').match(regex);
+    return match ? `${enhancerName}:${match[1] || match[2]}` : null;
+}
 
 // 负责调度和执行所有搜图策略的核心处理器
 export class SearchHandler {
@@ -20,6 +36,7 @@ export class SearchHandler {
         private config: Config,
         private allSearchers: Record<string, Searcher>,
         private allEnabledSearchers: Searcher[],
+        private puppeteerManager: PuppeteerManager, // [FEAT] 注入 PuppeteerManager 以便使用其方法
     ) {
         this.puppeteerSemaphore = new Semaphore(config.puppeteer.concurrency);
     }
@@ -33,6 +50,41 @@ export class SearchHandler {
           logger.warn(errorMessage, this.config.debug.enabled ? error : '');
           return { engine: searcher.name, results: [], error: errorMessage };
         }
+    }
+
+    // [FEAT] 新增：统一处理图源增强逻辑，并应用并发保护
+    public async enhanceResult(
+      result: SearcherResult.Result,
+      sortedEnhancers: Enhancer[],
+      processedIds?: Set<string>
+    ): Promise<{ enhancedResult: EnhancedResult | null; enhancementId: string | null }> {
+      for (const enhancer of sortedEnhancers) {
+        const enhancementId = getEnhancementId(enhancer.name, result);
+        if (enhancementId && processedIds?.has(enhancementId)) {
+          if (this.config.debug.enabled) logger.info(`[增强器] 跳过重复的图源处理: ${enhancementId}`);
+          continue;
+        }
+    
+        try {
+          let enhancedData: EnhancedResult | null;
+          const enhanceTask = () => enhancer.enhance(result);
+    
+          if (enhancer.needsPuppeteer) {
+            if (this.config.debug.enabled) logger.info(`[${enhancer.name}] 增强任务已加入 Puppeteer 队列。`);
+            enhancedData = await this.puppeteerSemaphore.run(enhanceTask);
+          } else {
+            enhancedData = await enhanceTask();
+          }
+    
+          if (enhancedData) {
+            if (this.config.debug.enabled) logger.info(`[${enhancer.name}] 已成功获取图源信息。`);
+            return { enhancedResult: enhancedData, enhancementId };
+          }
+        } catch (e) {
+          logger.warn(`[${enhancer.name}] 图源处理时发生错误:`, e);
+        }
+      }
+      return { enhancedResult: null, enhancementId: null };
     }
 
     private async handleAttachEngines(attachEngines: Searcher[], options: SearchOptions, botUser: any, session: any, collectedErrors: string[]) {
@@ -140,7 +192,9 @@ export class SearchHandler {
                     resultsToShow = [group.results[0]];
                 }
                 for (const result of resultsToShow) {
-                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, group.engine, botUser, processedEnhancements);
+                    const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
+                    if (enhancementId) processedEnhancements.add(enhancementId);
+                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, group.engine, botUser, enhancedResult);
                 }
             }
         } else if (lowConfidenceGroups.length > 0) {
@@ -217,7 +271,9 @@ export class SearchHandler {
             const figureMessage = h('figure');
             const processedEnhancements = new Set<string>();
             for (const result of resultsToShow) {
-                await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, highConfidenceSearcherName, botUser, processedEnhancements);
+                const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
+                if (enhancementId) processedEnhancements.add(enhancementId);
+                await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, highConfidenceSearcherName, botUser, enhancedResult);
             }
             await MessageBuilder.sendFigureMessage(session, figureMessage, '发送高匹配度结果失败');
             
@@ -317,7 +373,9 @@ export class SearchHandler {
                     await session.send(`[${output.engine}] 找到高匹配度结果:`);
                     const figureMessage = h('figure');
                     for (const result of resultsToShow) {
-                        await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, sortedEnhancers, result, output.engine, botUser, processedEnhancements);
+                        const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
+                        if (enhancementId) processedEnhancements.add(enhancementId);
+                        await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, output.engine, botUser, enhancedResult);
                     }
                     await MessageBuilder.sendFigureMessage(session, figureMessage, `[${output.engine}] 发送高匹配度结果失败`);
                 }
@@ -375,4 +433,3 @@ export class SearchHandler {
         }
     }
 }
-// --- END OF FILE src/core/search-handler.ts ---

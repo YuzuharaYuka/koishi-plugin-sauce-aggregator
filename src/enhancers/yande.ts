@@ -24,11 +24,13 @@ interface YandeRePost {
   [key: string]: any
 }
 
-// Yande.re 图源增强器
-export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class YandeReEnhancer extends Enhancer<YandeReConfig.Config> {
   public readonly name: 'yandere' = 'yandere';
 
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: YandeReConfig.Config) {}
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: YandeReConfig.Config) {
+    super(ctx, mainConfig, subConfig);
+  }
 
   // 增强单个搜索结果，获取 Yande.re 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -142,4 +144,3 @@ export class YandeReEnhancer implements Enhancer<YandeReConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/yande.ts ---

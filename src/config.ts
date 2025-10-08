@@ -60,6 +60,8 @@ export interface SearchConfig {
 // 图源增强器的抽象基类
 export abstract class Enhancer<T = any> {
   abstract name: EnhancerName
+  // [FEAT] 增加 needsPuppeteer 属性，用于识别需要并发保护的增强器
+  public needsPuppeteer: boolean = false;
   constructor(public ctx: Context, public mainConfig: Config, public subConfig: T) {}
   abstract enhance(result: Searcher.Result): Promise<EnhancedResult | null>;
 }
@@ -293,4 +295,3 @@ export const Config: Schema<Config> = Schema.intersect([
     }),
   }).description('调试设置'),
 ])
-// --- END OF FILE src/config.ts ---

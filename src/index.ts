@@ -103,7 +103,7 @@ export function apply(ctx: Context, config: Config) {
   if (allEnabledSearchers.length > 0) logger.info(`已启用的搜图引擎顺序: ${allEnabledSearchers.map(s => s.name).join(', ')}`);
   if (sortedEnhancers.length > 0) logger.info(`已启用的图源顺序: ${sortedEnhancers.map(e => e.name).join(', ')}`);
 
-  const searchHandler = new SearchHandler(ctx, config, allSearchers, allEnabledSearchers);
+  const searchHandler = new SearchHandler(ctx, config, allSearchers, allEnabledSearchers, puppeteerManager);
 
   // 注册 `sauce` 指令
   ctx.command('sauce [...text:string]', '聚合搜图')
@@ -242,24 +242,30 @@ export function apply(ctx: Context, config: Config) {
       for (const service of linkParsingRegistry) {
         if (service.enhancer && service.config.enableLinkParsing && service.regex.test(url)) {
           if (config.debug.enabled) logger.info(`[${service.name}] 检测到链接，开始自动解析: ${url}`);
+          // [FEAT] 增加即时交互反馈
+          await session.send('检测到图源链接，正在解析，请稍候...');
           try {
             const dummyResult: SearcherResult.Result = { url, similarity: 100, thumbnail: '', source: '链接解析' };
-            const enhancedData = await service.enhancer.enhance(dummyResult);
-            if (enhancedData) {
+            const enhancedData = await searchHandler.enhanceResult(dummyResult, [service.enhancer]);
+
+            if (enhancedData?.enhancedResult) {
               const botUser = await session.bot.getSelf();
               const figureMessage = h('figure');
-              if (enhancedData.imageBuffer) {
-                figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))
+              if (enhancedData.enhancedResult.imageBuffer) {
+                figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.enhancedResult.imageBuffer, enhancedData.enhancedResult.imageType)))
               }
-              figureMessage.children.push(h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.details));
-              if (enhancedData.additionalImages?.length > 0) {
-                figureMessage.children.push(...enhancedData.additionalImages);
+              figureMessage.children.push(h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.enhancedResult.details));
+              if (enhancedData.enhancedResult.additionalImages?.length > 0) {
+                figureMessage.children.push(...enhancedData.enhancedResult.additionalImages);
               }
               await session.send(figureMessage);
               return; 
+            } else {
+              await session.send('链接解析失败或未找到有效信息。');
             }
           } catch (e) {
             logger.warn(`[${service.name}] 链接解析失败 (URL: ${url}):`, e.message);
+            await session.send(`[${service.name}] 链接解析失败: ${e.message}`);
           }
           break;
         }
@@ -282,4 +288,3 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.on('dispose', () => puppeteerManager.dispose());
 }
-// --- END OF FILE src/index.ts ---

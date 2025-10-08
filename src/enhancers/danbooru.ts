@@ -32,12 +32,15 @@ interface DanbooruPost {
   message?: string;
 }
 
-// Danbooru 图源增强器，使用 Puppeteer 绕过 Cloudflare 获取数据
-export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
   public readonly name: 'danbooru' = 'danbooru';
+  public readonly needsPuppeteer: boolean = true;
   private puppeteer: PuppeteerManager;
   
   constructor(public ctx: Context, public mainConfig: Config, public subConfig: DanbooruConfig.Config, puppeteerManager: PuppeteerManager) {
+    // [FIX] 调用父类构造函数
+    super(ctx, mainConfig, subConfig);
     this.puppeteer = puppeteerManager;
   }
 
@@ -249,4 +252,3 @@ export class DanbooruEnhancer implements Enhancer<DanbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
-// --- END OF FILE src/enhancers/danbooru.ts ---

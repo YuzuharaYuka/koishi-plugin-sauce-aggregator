@@ -7,19 +7,18 @@ import type { Page } from 'puppeteer-core';
 
 const logger = new Logger('sauce-aggregator')
 
-// Ascii2D 搜图引擎实现
-export class Ascii2D implements Searcher<Ascii2DConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
   public readonly name: SearchEngineName = 'ascii2d';
   private puppeteer: PuppeteerManager;
   
   constructor(public ctx: Context, public mainConfig: Config, public subConfig: Ascii2DConfig.Config, puppeteerManager: PuppeteerManager) {
+    super(ctx, mainConfig, subConfig);
     this.puppeteer = puppeteerManager;
   }
 
   // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
-    // [FIX] 增加 URL 协议检查，确保只处理 HTTP/HTTPS 链接。
-    // 这是为了防止将沙盒环境中的 data: 或 blob: 等本地 URL 传给该引擎，导致搜索必然失败。
     if (!options.imageUrl || !options.imageUrl.startsWith('http')) {
         logger.warn('[ascii2d] 此引擎需要一个有效的 HTTP/HTTPS 图片 URL 才能进行搜索。已跳过。');
         return [];

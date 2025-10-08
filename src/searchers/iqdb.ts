@@ -30,11 +30,13 @@ function parseImageProperties(alt: string) {
     return { score, tags };
 }
 
-// IQDB 搜图引擎实现
-export class IQDB implements Searcher<IQDBConfig.Config> {
+// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+export class IQDB extends Searcher<IQDBConfig.Config> {
   public readonly name: SearchEngineName = 'iqdb';
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: IQDBConfig.Config) {}
+  constructor(public ctx: Context, public mainConfig: Config, public subConfig: IQDBConfig.Config) {
+    super(ctx, mainConfig, subConfig);
+  }
 
   // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
@@ -138,5 +140,3 @@ export class IQDB implements Searcher<IQDBConfig.Config> {
     return results.filter(r => r.thumbnail && r.url);
   }
 }
-
-// --- END OF FILE src/searchers/iqdb.ts ---

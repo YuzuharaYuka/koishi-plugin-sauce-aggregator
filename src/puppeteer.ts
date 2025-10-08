@@ -73,8 +73,6 @@ export class PuppeteerManager {
             ],
             executablePath: executablePath,
             protocolTimeout: launchTimeout,
-            // [FIX] 修正：使用专用的浏览器启动超时 `browserLaunchTimeout`，而非网络请求超时 `requestTimeout`。
-            // 这是为了确保浏览器进程有足够的时间完成初始化，避免后续操作因此挂起。
             timeout: launchTimeout,
         });
 
@@ -144,7 +142,6 @@ export class PuppeteerManager {
         page.setDefaultTimeout(this.config.requestTimeout * 1000);
         await page.setBypassCSP(true);
         
-        // 如果不是常驻模式，监听页面关闭事件以安排浏览器关闭
         if (!this.config.puppeteer.persistentBrowser) {
             page.on('close', () => this.scheduleClose());
         }
@@ -152,6 +149,28 @@ export class PuppeteerManager {
         return page;
     }
 
+    // [FEAT] 增加可复用的临时文件处理器
+    public async withTempFile<T>(buffer: Buffer, fileName: string, action: (filePath: string) => Promise<T>): Promise<T> {
+        const tempFilePath = path.resolve(this.ctx.baseDir, 'temp', `sauce-aggregator-${Date.now()}-${fileName}`);
+        let tempFileCreated = false;
+        try {
+            await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
+            await fs.writeFile(tempFilePath, buffer);
+            tempFileCreated = true;
+            if (this.config.debug.enabled) logger.info(`已创建临时文件: ${tempFilePath}`);
+            return await action(tempFilePath);
+        } finally {
+            if (tempFileCreated) {
+                try {
+                    await fs.unlink(tempFilePath);
+                    if (this.config.debug.enabled) logger.info(`已清理临时文件: ${tempFilePath}`);
+                } catch (unlinkError) {
+                    logger.warn(`清理临时文件失败 ${tempFilePath}:`, unlinkError);
+                }
+            }
+        }
+    }
+    
     // 检查当前页面是否为人机验证页面
     public async checkForCloudflare(page: Page): Promise<boolean> {
         try {
