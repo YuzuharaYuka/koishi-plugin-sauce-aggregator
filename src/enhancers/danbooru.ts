@@ -31,6 +31,64 @@ interface DanbooruPost {
   message?: string;
 }
 
+// [FEAT] 封装浏览器环境内的 fetch 逻辑，增加健壮性
+async function fetchInBrowser(page, url: string, type: 'json' | 'image', retries: number): Promise<any> {
+    return page.evaluate(async (url, type, retries) => {
+        const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+        let lastError: Error | null = null;
+
+        for (let i = 0; i <= retries; i++) {
+            try {
+                const res = await fetch(url, { mode: 'cors' });
+
+                if (!res.ok) {
+                    throw new Error(`请求失败，状态码: ${res.status}`);
+                }
+
+                // 统一的 Cloudflare 检测
+                const contentType = res.headers.get('Content-Type') || '';
+                if (contentType.includes('text/html')) {
+                    const text = await res.text();
+                    if (/Verifying you are human|cdn-cgi\/challenge-platform/i.test(text)) {
+                        return { isCloudflare: true };
+                    }
+                    // 如果期望的是图片或JSON，但收到了HTML，则认为是错误
+                    if (type === 'image' || type === 'json') {
+                         throw new Error(`预期得到 ${type}，但收到了 HTML 页面。`);
+                    }
+                }
+                
+                if (type === 'json') {
+                    return res.json();
+                }
+
+                if (type === 'image') {
+                    if(!contentType.startsWith('image/')) {
+                        throw new Error(`预期得到图片，但收到了 ${contentType} 类型。`);
+                    }
+                    const buffer = await res.arrayBuffer();
+                    let binary = '';
+                    const bytes = new Uint8Array(buffer);
+                    for (let j = 0; j < bytes.byteLength; j++) {
+                        binary += String.fromCharCode(bytes[j]);
+                    }
+                    return { base64: btoa(binary) };
+                }
+
+            } catch (error) {
+                lastError = error;
+                if (i < retries) {
+                    // 在浏览器控制台打印日志，便于调试
+                    console.log(`[sauce-aggregator/danbooru] 尝试 ${i + 1} 失败 (URL: ${url}): ${error.message}，2秒后重试...`);
+                    await sleep(2000);
+                }
+            }
+        }
+        return { isError: true, message: `经过 ${retries + 1} 次尝试后失败。最后错误: ${lastError?.message}` };
+    }, url, type, retries);
+}
+
+
 export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
   public readonly name: 'danbooru' = 'danbooru';
   public readonly needsPuppeteer: boolean = true;
@@ -67,36 +125,18 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       
       await page.goto('https://danbooru.donmai.us', { waitUntil: 'domcontentloaded' });
       
-      const evaluationPromise = page.evaluate(async (url) => {
-        try {
-            const res = await fetch(url);
-            if (!res.ok) {
-              if (res.headers.get('Content-Type')?.includes('text/html')) {
-                  const text = await res.text();
-                  if (/Verifying you are human|cdn-cgi\/challenge-platform/i.test(text)) {
-                      return JSON.stringify({ isCloudflare: true });
-                  }
-              }
-              throw new Error(`API 请求失败，状态码: ${res.status}`);
-            }
-            return await res.text();
-        } catch (e) {
-            return JSON.stringify({ isError: true, message: e.message });
-        }
-      }, apiUrl);
-
-      const timeoutPromise = new Promise<string>((_, reject) =>
+      const apiPromise = fetchInBrowser(page, apiUrl, 'json', 0); // API 通常不应重试，以快速失败
+      const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(`页面内 API 请求超时 (${this.mainConfig.requestTimeout}秒)。`)), this.mainConfig.requestTimeout * 1000)
       );
+      
+      const responseData = await Promise.race([apiPromise, timeoutPromise]);
 
-      const jsonContent = await Promise.race([evaluationPromise, timeoutPromise]);
-      const responseData = JSON.parse(jsonContent);
-
-      if (responseData.isError) {
-        throw new Error(`页面内 Fetch 失败: ${responseData.message}`);
-      }
       if (responseData.isCloudflare) {
           throw new Error('检测到 Cloudflare 人机验证页面。这通常由您的网络环境或代理 IP 引起。请尝试更换网络环境或暂时禁用此图源。');
+      }
+      if (responseData.isError) {
+        throw new Error(`页面内 Fetch 失败: ${responseData.message}`);
       }
       
       post = responseData as DanbooruPost;
@@ -119,39 +159,16 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       if (downloadUrl) {
         if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
         
-        const imageBase64 = await page.evaluate(async (url, retries) => {
-            const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-            let lastError: Error | null = null;
+        const imageResponse = await fetchInBrowser(page, downloadUrl, 'image', this.mainConfig.enhancerRetryCount);
 
-            for (let i = 0; i <= retries; i++) {
-                try {
-                    const response = await fetch(url, { mode: 'cors' });
-                    if (!response.ok) {
-                        throw new Error(`图片 fetch 失败: ${response.status} ${response.statusText}`);
-                    }
-                    const buffer = await response.arrayBuffer();
-                    let binary = '';
-                    const bytes = new Uint8Array(buffer);
-                    for (let j = 0; j < bytes.byteLength; j++) {
-                        binary += String.fromCharCode(bytes[j]);
-                    }
-                    return btoa(binary);
-                } catch (error) {
-                    lastError = error;
-                    if (i < retries) {
-                        console.log(`[Danbooru Downloader] 尝试 ${i + 1} 失败，2秒后重试...`);
-                        await sleep(2000);
-                    }
-                }
-            }
-            return { isError: true, message: `下载失败 (${retries + 1}次尝试)。最后错误: ${lastError?.message}` };
-        }, downloadUrl, this.mainConfig.enhancerRetryCount);
-
-        if (typeof imageBase64 === 'object' && imageBase64.isError) {
-          throw new Error(`在浏览器上下文中下载图片失败: ${imageBase64.message}`);
+        if (imageResponse.isCloudflare) {
+            throw new Error('下载图片时检测到 Cloudflare 人机验证页面。');
+        }
+        if (imageResponse.isError) {
+          throw new Error(`在浏览器上下文中下载图片失败: ${imageResponse.message}`);
         }
         
-        imageBuffer = Buffer.from(imageBase64 as string, 'base64');
+        imageBuffer = Buffer.from(imageResponse.base64, 'base64');
         if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
       }
       
@@ -172,11 +189,9 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       return { details, imageBuffer, imageType };
       
     } catch (error) {
-      if (error.message.includes('Cloudflare')) {
-        throw error;
-      }
-      logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, error);
-      if (this.mainConfig.debug.enabled && !(error.message.includes('Fetch 失败'))) {
+      logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, error.message);
+      // 只有在非 Cloudflare 错误时才保存快照，避免无效截图
+      if (this.mainConfig.debug.enabled && !error.message.includes('Cloudflare')) {
           await this.puppeteer.saveErrorSnapshot(page, this.name);
       }
       throw new Error(`[danbooru] 处理失败: ${error.message}`);
