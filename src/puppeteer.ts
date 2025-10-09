@@ -1,4 +1,3 @@
-// --- START OF FILE src/puppeteer.ts ---
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
 import puppeteer from 'puppeteer-extra'
@@ -149,26 +148,23 @@ export class PuppeteerManager {
         return page;
     }
 
-    // [FEAT] 增加可复用的临时文件处理器
-    public async withTempFile<T>(buffer: Buffer, fileName: string, action: (filePath: string) => Promise<T>): Promise<T> {
+    // [FIX] 改造 withTempFile，使其返回路径和清理函数，而不是自动清理
+    public async createTempFile(buffer: Buffer, fileName: string): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
         const tempFilePath = path.resolve(this.ctx.baseDir, 'data', 'temp', 'sauce-aggregator', `sauce-aggregator-${Date.now()}-${fileName}`);
-        let tempFileCreated = false;
-        try {
-            await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
-            await fs.writeFile(tempFilePath, buffer);
-            tempFileCreated = true;
-            if (this.config.debug.enabled) logger.info(`已创建临时文件: ${tempFilePath}`);
-            return await action(tempFilePath);
-        } finally {
-            if (tempFileCreated) {
-                try {
-                    await fs.unlink(tempFilePath);
-                    if (this.config.debug.enabled) logger.info(`已清理临时文件: ${tempFilePath}`);
-                } catch (unlinkError) {
-                    logger.warn(`清理临时文件失败 ${tempFilePath}:`, unlinkError);
-                }
+        await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
+        await fs.writeFile(tempFilePath, buffer);
+        if (this.config.debug.enabled) logger.info(`已创建临时文件: ${tempFilePath}`);
+    
+        const cleanup = async () => {
+            try {
+                await fs.unlink(tempFilePath);
+                if (this.config.debug.enabled) logger.info(`已清理临时文件: ${tempFilePath}`);
+            } catch (unlinkError) {
+                logger.warn(`清理临时文件失败 ${tempFilePath}:`, unlinkError);
             }
-        }
+        };
+    
+        return { filePath: tempFilePath, cleanup };
     }
     
     // 检查当前页面是否为人机验证页面

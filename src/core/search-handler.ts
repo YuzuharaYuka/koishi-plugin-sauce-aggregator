@@ -60,7 +60,7 @@ export class SearchHandler {
         for (const enhancer of sortedEnhancers) {
             const urlPattern = this.enhancerUrlPatterns[enhancer.name];
             if (!urlPattern || !urlPattern.test(textToSearch)) {
-                continue; // 如果结果中不包含此增强器能处理的链接特征，直接跳过
+                continue;
             }
 
             const enhancementId = this.getEnhancementId(enhancer.name, textToSearch);
@@ -88,7 +88,6 @@ export class SearchHandler {
             } catch (e) {
               logger.warn(`[${enhancer.name}] 图源处理时发生错误:`, e);
             }
-            // 找到第一个匹配的增强器并尝试后，无论成功与否都应退出，避免一个结果被多个增强器处理
             break; 
         }
         return { enhancedResult: null, enhancementId: null };
@@ -122,24 +121,35 @@ export class SearchHandler {
             await MessageBuilder.sendFigureMessage(session, figureMessage, '发送附加结果失败');
         }
     }
-
+    
+    // [FEAT] 优化 executeSearch 逻辑，集中处理临时文件
     private async executeSearch(searchers: Searcher[], options: SearchOptions): Promise<SearchOutput[]> {
-        const apiTasks: Promise<SearchOutput>[] = [];
-        const puppeteerTasks: Promise<SearchOutput>[] = [];
-
-        for (const searcher of searchers) {
-            const task = () => this.performSearch(searcher, options);
-            
-            if (PUPPETEER_ENGINES.includes(searcher.name)) {
-                if (this.config.debug.enabled) logger.info(`Puppeteer 任务 [${searcher.name}] 已加入队列。`);
-                puppeteerTasks.push(this.puppeteerSemaphore.run(task));
-            } else {
-                apiTasks.push(task());
+        const puppeteerSearchers = searchers.filter(s => PUPPETEER_ENGINES.includes(s.name));
+        const apiSearchers = searchers.filter(s => !PUPPETEER_ENGINES.includes(s.name));
+    
+        let tempFile: { filePath: string; cleanup: () => Promise<void> } | null = null;
+        let puppeteerPromises: Promise<SearchOutput>[] = [];
+    
+        try {
+            if (puppeteerSearchers.length > 0) {
+                tempFile = await this.puppeteerManager.createTempFile(options.imageBuffer, options.fileName);
+                const newOptions = { ...options, tempFilePath: tempFile.filePath };
+                
+                puppeteerPromises = puppeteerSearchers.map(searcher => {
+                    const task = () => this.performSearch(searcher, newOptions);
+                    if (this.config.debug.enabled) logger.info(`Puppeteer 任务 [${searcher.name}] 已加入队列。`);
+                    return this.puppeteerSemaphore.run(task);
+                });
+            }
+    
+            const apiPromises = apiSearchers.map(searcher => this.performSearch(searcher, options));
+    
+            return await Promise.all([...apiPromises, ...puppeteerPromises]);
+        } finally {
+            if (tempFile) {
+                await tempFile.cleanup();
             }
         }
-
-        const allPromises = [...apiTasks, ...puppeteerTasks];
-        return Promise.all(allPromises);
     }
 
     public async handleDirectSearch(
@@ -247,14 +257,14 @@ export class SearchHandler {
   
         for (const searcher of searchers) {
             executedEngineNames.add(searcher.name); 
-            const output = await this.puppeteerSemaphore.run(() => this.performSearch(searcher, options));
-            if (output.error) collectedErrors.push(output.error);
-            if (output.results.length > 0) executedOutputs.push(output);
+            const output = await this.executeSearch([searcher], options);
+            if (output[0].error) collectedErrors.push(output[0].error);
+            if (output[0].results.length > 0) executedOutputs.push(output[0]);
   
             const engineConfig = this.config[searcher.name] as { confidenceThreshold?: number };
             const threshold = (engineConfig?.confidenceThreshold > 0) ? engineConfig.confidenceThreshold : this.config.confidenceThreshold;
             
-            const foundResults = output.results.filter(r => r.similarity >= threshold);
+            const foundResults = output[0].results.filter(r => r.similarity >= threshold);
             if (foundResults.length > 0) {
               highConfidenceResults = foundResults;
               highConfidenceSearcherName = searcher.name;
@@ -361,9 +371,26 @@ export class SearchHandler {
             await session.send(`搜索完成，找到 ${highConfidenceResults.length} 个高匹配度结果:`);
             
             let resultsToShow = highConfidenceResults;
-            if (highConfidenceResults.length > 1 && this.config.search.parallelHighConfidenceStrategy === 'first') {
+            // [FIX] 增加对 soutubot 的特判，确保其多个高相似度结果都能展示
+            const soutubotResults = highConfidenceResults.filter(r => r.engine === 'soutubot');
+            if (soutubotResults.length > 0) {
+                const otherResults = highConfidenceResults.filter(r => r.engine !== 'soutubot');
+                const limitedSoutubot = soutubotResults.slice(0, this.config.soutubot.maxHighConfidenceResults);
+                if (this.config.search.parallelHighConfidenceStrategy === 'all') {
+                    resultsToShow = [...otherResults, ...limitedSoutubot];
+                } else { // 'first' 策略
+                    const bestOther = otherResults.reduce((prev, curr) => (prev?.result.similarity > curr?.result.similarity ? prev : curr), null);
+                    const bestSoutubot = limitedSoutubot.reduce((prev, curr) => (prev?.result.similarity > curr?.result.similarity ? prev : curr), null);
+                    if(bestOther && (!bestSoutubot || bestOther.result.similarity >= bestSoutubot.result.similarity)) {
+                        resultsToShow = [bestOther];
+                    } else {
+                        resultsToShow = limitedSoutubot;
+                    }
+                }
+            } else if (highConfidenceResults.length > 1 && this.config.search.parallelHighConfidenceStrategy === 'first') {
                 resultsToShow = [highConfidenceResults.reduce((prev, curr) => prev.result.similarity > curr.result.similarity ? prev : curr)];
             }
+
 
             const figureMessage = h('figure');
             const processedEnhancements = new Set<string>();

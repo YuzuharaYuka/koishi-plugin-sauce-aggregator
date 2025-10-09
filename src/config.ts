@@ -1,4 +1,3 @@
-// --- START OF FILE src/config.ts ---
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
@@ -11,6 +10,7 @@ export interface SearchOptions {
   imageBuffer: Buffer;
   fileName: string;
   maxResults: number;
+  tempFilePath?: string; // [FEAT] 增加可选的临时文件路径，用于共享
 }
 
 // 搜图引擎返回结果的统一格式
