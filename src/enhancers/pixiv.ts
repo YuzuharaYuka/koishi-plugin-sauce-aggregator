@@ -5,6 +5,7 @@ import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
+// ... (PixivApiService and PixivIllust interface remain the same)
 interface PixivIllust {
   id: number;
   title: string;
@@ -30,8 +31,6 @@ interface PixivIllust {
   }[];
   page_count: number;
 }
-
-// 封装了 Pixiv API 的请求逻辑，包括 AccessToken 的自动刷新
 class PixivApiService {
   private accessToken: string | null = null;
   private readonly headers: Record<string, string>;
@@ -96,7 +95,6 @@ class PixivApiService {
     }
   }
   
-  // 获取作品详情
   public async getArtworkDetail(pid: string): Promise<PixivIllust | null> {
     try {
       const response = await this._request(`https://app-api.pixiv.net/v1/illust/detail`, { illust_id: pid, filter: 'for_ios' });
@@ -107,7 +105,6 @@ class PixivApiService {
     }
   }
 
-  // 下载图片
   public async downloadImage(url: string): Promise<Buffer | null> {
     try {
       return await downloadWithRetry(this.ctx, url, {
@@ -121,12 +118,13 @@ class PixivApiService {
   }
 }
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
+
 export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
   public readonly name: 'pixiv' = 'pixiv';
   private api: PixivApiService;
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: PixivConfig.Config) {
+  // [FIX] 修正构造函数以避免属性覆盖
+  constructor(ctx: Context, mainConfig: Config, subConfig: PixivConfig.Config) {
       super(ctx, mainConfig, subConfig);
       this.api = new PixivApiService(ctx, mainConfig, subConfig);
   }
@@ -200,7 +198,6 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
     }
   }
 
-  // 从结果中查找有效的 Pixiv 链接
   private findPixivUrl(result: Searcher.Result): string | null {
     const urlRegex = /(https?:\/\/(?:www\.)?pixiv\.net\/(?:en\/)?(?:artworks\/\d+|member_illust\.php\?.*illust_id=\d+)|i\.pximg\.net\/[^\s"]+)/;
     
@@ -215,7 +212,6 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
     return null;
   }
 
-  // 从多种 Pixiv 链接格式中解析作品 ID
   private parsePostId(url: string): string | null {
     const patterns = [
         /artworks\/(?<id>\d+)/,
@@ -231,7 +227,6 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
     return null;
   }
 
-  // 构建展示给用户的详细信息元素
   private buildDetailNodes(illust: PixivIllust): h[] {
     const info: string[] = [];
     info.push(`Pixiv (ID: ${illust.id})`);

@@ -4,15 +4,14 @@ import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, TraceMoe as TraceMoeConfig, SearchEngineName } from '../config'
 const logger = new Logger('sauce-aggregator')
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
   public readonly name: SearchEngineName = 'tracemoe';
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: TraceMoeConfig.Config) {
+  // [FIX] 遵循正确的构造函数模式
+  constructor(ctx: Context, mainConfig: Config, subConfig: TraceMoeConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
 
-  // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const form = new FormData()
     const safeBuffer = Buffer.from(options.imageBuffer);
@@ -31,7 +30,6 @@ export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
       if (data.error) throw new Error(`API 返回错误: ${data.error}`)
       if (!data.result || data.result.length === 0) return []
 
-      // 对结果进行去重
       const uniqueResults = [];
       const seen = new Set<string>();
       for (const res of data.result) {
@@ -54,12 +52,10 @@ export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
     }
   }
   
-  // 解析 API 返回的结果
   private _parseResults(results: any[]): Searcher.Result[] {
     return results.map(res => this._formatSingleResult(res));
   }
 
-  // 格式化单个结果对象
   private _formatSingleResult(res: any): Searcher.Result {
     const { anilist, episode, from, similarity, image, video } = res;
     const { title, status, isAdult, synonyms, startDate, season, format, episodes, genres, studios, externalLinks, idMal, siteUrl, coverImage } = anilist;
@@ -97,7 +93,6 @@ export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
     };
   }
 
-  // 将秒数格式化为 HH:MM:SS
   private _formatTime(seconds: number): string {
     const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
     const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');

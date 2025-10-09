@@ -7,7 +7,6 @@ import { USER_AGENT } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
-// 修正相对路径的 URL
 function fixedHref(href: string): string {
   if (!href) return ''
   if (href.startsWith('//')) return 'https:' + href
@@ -15,7 +14,6 @@ function fixedHref(href: string): string {
   return href
 }
 
-// 从图片的 alt 文本中解析评分和标签
 function parseImageProperties(alt: string) {
     if (!alt) return { score: undefined, tags: undefined }
     const properties: Record<string, string> = {};
@@ -30,15 +28,14 @@ function parseImageProperties(alt: string) {
     return { score, tags };
 }
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class IQDB extends Searcher<IQDBConfig.Config> {
   public readonly name: SearchEngineName = 'iqdb';
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: IQDBConfig.Config) {
+  // [FIX] 遵循正确的构造函数模式
+  constructor(ctx: Context, mainConfig: Config, subConfig: IQDBConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
 
-  // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const form = new FormData()
     const safeBuffer = Buffer.from(options.imageBuffer);
@@ -80,7 +77,6 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
     }
   }
 
-  // 解析 IQDB 的 HTML 响应页面
   private _parseResults(html: string): Searcher.Result[] {
     const $ = cheerio.load(html);
     const resultElements = $('.pages > div');

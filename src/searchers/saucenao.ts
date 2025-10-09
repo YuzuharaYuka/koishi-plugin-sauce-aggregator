@@ -8,16 +8,15 @@ const saucenaoIndexMap: Record<number, string> = {
   0: 'H-Mags', 2: 'H-Game CG', 4: 'HCG', 5: 'Pixiv', 6: 'Pixiv Historical', 8: 'Nico Nico Seiga', 9: 'Danbooru', 10: 'Drawr', 11: 'Nijie', 12: 'Yande.re', 16: 'FAKKU', 18: 'H-Misc (nhentai)', 19: '2D-Market', 20: 'MediBang', 21: 'Anime', 22: 'H-Anime', 23: 'Movies', 24: 'Shows', 25: 'Gelbooru', 26: 'Konachan', 27: 'Sankaku Channel', 28: 'Anime-Pictures', 29: 'e621', 30: 'Idol Complex', 31: 'BCY Illust', 32: 'BCY Cosplay', 33: 'PortalGraphics', 34: 'deviantArt', 35: 'Pawoo', 36: 'Madokami', 37: 'MangaDex', 38: 'H-Misc (e-hentai)', 39: 'ArtStation', 40: 'FurAffinity', 41: 'Twitter', 42: 'Furry Network', 43: 'Kemono', 44: 'Skeb',
 }
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
   public readonly name: SearchEngineName = 'saucenao';
   private keyIndex = 0
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: SauceNAOConfig.Config) {
+  // [FIX] 遵循正确的构造函数模式
+  constructor(ctx: Context, mainConfig: Config, subConfig: SauceNAOConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
 
-  // 执行搜索，并处理 API Key 的轮换逻辑
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const apiKeys = this.subConfig.apiKeys;
     if (!apiKeys || apiKeys.length === 0) {
@@ -92,14 +91,12 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
     throw new Error('所有 SauceNAO API Key 均尝试失败。');
   }
 
-  // 解析 SauceNAO API 的返回结果
   private _parseResults(apiResults: any[]): Searcher.Result[] {
     return apiResults
       .filter(res => res?.header?.similarity && res?.data?.ext_urls?.length > 0)
       .map(res => this._formatSingleResult(res));
   }
 
-  // 格式化单个结果对象
   private _formatSingleResult(res: any): Searcher.Result {
     const { header, data } = res;
     const details: string[] = [];
@@ -125,7 +122,6 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
     };
   }
   
-  // 格式化附加的来源链接
   private _formatExtraUrls(ext_urls: string[], sourceUrl: string): string[] {
     const siteNameMap = {
       'pixiv.net': 'Pixiv', 'twitter.com': 'Twitter', 'danbooru.donmai.us': 'Danbooru',

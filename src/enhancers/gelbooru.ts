@@ -30,15 +30,14 @@ interface GelbooruResponse {
     }
 }
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class GelbooruEnhancer extends Enhancer<GelbooruConfig.Config> {
   public readonly name: 'gelbooru' = 'gelbooru';
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: GelbooruConfig.Config) {
+  // [FIX] 遵循正确的构造函数模式
+  constructor(ctx: Context, mainConfig: Config, subConfig: GelbooruConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
 
-  // 增强单个搜索结果，获取 Gelbooru 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
     const gelbooruUrl = this.findGelbooruUrl(result);
     if (!gelbooruUrl) return null;
@@ -128,7 +127,6 @@ export class GelbooruEnhancer extends Enhancer<GelbooruConfig.Config> {
     }
   }
 
-  // 从结果中查找有效的 Gelbooru 链接
   private findGelbooruUrl(result: Searcher.Result): string | null {
     if (result.url && GELBOORU_URL_REGEX.test(result.url)) return result.url;
     if (result.details) {
@@ -140,13 +138,11 @@ export class GelbooruEnhancer extends Enhancer<GelbooruConfig.Config> {
     return null;
   }
 
-  // 从 Gelbooru 链接中解析查询参数
   private parseParam(url: string, param: string): string | null {
     const match = url.match(new RegExp(`[?&]${param}=([^&]*)`));
     return match ? match[1] : null;
   }
 
-  // 构建展示给用户的详细信息元素
   private buildDetailNodes(post: GelbooruPost): h[] {
     const info: string[] = [];
     info.push(`Gelbooru (ID: ${post.id})`);

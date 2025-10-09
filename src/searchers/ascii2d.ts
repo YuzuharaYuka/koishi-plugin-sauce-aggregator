@@ -7,12 +7,12 @@ import type { Page } from 'puppeteer-core';
 
 const logger = new Logger('sauce-aggregator')
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
   public readonly name: SearchEngineName = 'ascii2d';
   private puppeteer: PuppeteerManager;
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: Ascii2DConfig.Config, puppeteerManager: PuppeteerManager) {
+  // [FIX] 遵循正确的构造函数模式
+  constructor(ctx: Context, mainConfig: Config, subConfig: Ascii2DConfig.Config, puppeteerManager: PuppeteerManager) {
     super(ctx, mainConfig, subConfig);
     this.puppeteer = puppeteerManager;
   }

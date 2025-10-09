@@ -24,15 +24,14 @@ interface YandeRePost {
   [key: string]: any
 }
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class YandeReEnhancer extends Enhancer<YandeReConfig.Config> {
   public readonly name: 'yandere' = 'yandere';
 
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: YandeReConfig.Config) {
+  // [FIX] 遵循正确的构造函数模式
+  constructor(ctx: Context, mainConfig: Config, subConfig: YandeReConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
 
-  // 增强单个搜索结果，获取 Yande.re 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
     const yandeReUrl = this.findYandeReUrl(result);
     if (!yandeReUrl) return null;
@@ -95,7 +94,6 @@ export class YandeReEnhancer extends Enhancer<YandeReConfig.Config> {
     }
   }
   
-  // 从结果中查找有效的 Yande.re 链接
   private findYandeReUrl(result: Searcher.Result): string | null {
     if (result.url && YANDERE_URL_REGEX.test(result.url)) {
         return result.url;
@@ -109,13 +107,11 @@ export class YandeReEnhancer extends Enhancer<YandeReConfig.Config> {
     return null;
   }
 
-  // 从 Yande.re 链接中解析帖子 ID
   private parsePostId(url: string): string | null {
     const match = url.match(/yande\.re\/post\/show\/(\d+)/)
     return match ? match[1] : null
   }
   
-  // 构建展示给用户的详细信息元素
   private buildDetailNodes(post: YandeRePost): h[] {
     const info: string[] = [];
     info.push(`Yande.re (ID: ${post.id})`);
