@@ -9,10 +9,8 @@ const logger = new Logger('sauce-aggregator:handler');
 type SearchOutput = { engine: SearchEngineName; results: SearcherResult.Result[]; error: string | null };
 
 const PUPPETEER_ENGINES: SearchEngineName[] = ['yandex', 'soutubot', 'ascii2d'];
+const MAIN_ENGINES: SearchEngineName[] = ['saucenao', 'iqdb', 'tracemoe', 'soutubot'];
 
-// [FIX] 彻底重构增强器调度逻辑，根除“幽灵触发”问题。
-// 不再盲目遍历所有增强器，而是根据结果中的链接特征，精确、智能地选择并调用唯一匹配的增强器。
-// 这是解决所有跨引擎误触发问题的最终方案。
 export class SearchHandler {
     private puppeteerSemaphore: Semaphore;
     private enhancerUrlPatterns: Record<string, RegExp>;
@@ -122,7 +120,6 @@ export class SearchHandler {
         }
     }
     
-    // [FEAT] 优化 executeSearch 逻辑，集中处理临时文件
     private async executeSearch(searchers: Searcher[], options: SearchOptions): Promise<SearchOutput[]> {
         const puppeteerSearchers = searchers.filter(s => PUPPETEER_ENGINES.includes(s.name));
         const apiSearchers = searchers.filter(s => !PUPPETEER_ENGINES.includes(s.name));
@@ -333,98 +330,132 @@ export class SearchHandler {
     }
     
     public async handleParallelSearch(
-      searchers: Searcher[],
-      options: SearchOptions,
-      botUser: any,
-      session: any,
-      collectedErrors: string[],
-      sortedEnhancers: Enhancer[]
+        searchers: Searcher[],
+        options: SearchOptions,
+        botUser: any,
+        session: any,
+        collectedErrors: string[],
+        sortedEnhancers: Enhancer[]
     ) {
-        const allOutputs = await this.executeSearch(searchers, options);
-        allOutputs.forEach(o => { if (o.error) collectedErrors.push(o.error); });
+        const abortController = new AbortController();
+        const { signal } = abortController;
 
-        const mainOutputs: SearchOutput[] = [];
-        const attachOutputs: SearchOutput[] = [];
+        const isFastFirstMode = this.config.search.parallelHighConfidenceStrategy === 'first' &&
+                                !this.config.yandex.alwaysAttach &&
+                                !this.config.ascii2d.alwaysAttach;
 
-        for (const output of allOutputs) {
-            const isAttach = (output.engine === 'yandex' && this.config.yandex.alwaysAttach) || 
-                             (output.engine === 'ascii2d' && this.config.ascii2d.alwaysAttach);
-            if (isAttach) attachOutputs.push(output);
-            else mainOutputs.push(output);
-        }
-        
-        const highConfidenceResults: { engine: SearchEngineName; result: SearcherResult.Result }[] = [];
-        const lowConfidenceResults: { engine: SearchEngineName; result: SearcherResult.Result }[] = [];
+        let highConfidenceSent = false;
+        const lowConfidenceOutputs: SearchOutput[] = [];
+        const processedEnhancements = new Set<string>();
+        const completedMainEngines = new Set<SearchEngineName>();
 
-        for (const output of mainOutputs) {
-            const engineConfig = this.config[output.engine] as { confidenceThreshold?: number };
+        const tempFile = await this.puppeteerManager.createTempFile(options.imageBuffer, options.fileName);
+        const optionsWithTempFile = { ...options, tempFilePath: tempFile.filePath };
+
+        const searchPromises = searchers.map(async (searcher) => {
+            if (signal.aborted) return;
+            
+            const performTask = () => {
+                const searchOptions = PUPPETEER_ENGINES.includes(searcher.name) ? optionsWithTempFile : options;
+                return this.performSearch(searcher, searchOptions);
+            };
+
+            let output: SearchOutput;
+            // [FIX] 恢复对 Puppeteer 任务的并发控制和日志记录
+            if (PUPPETEER_ENGINES.includes(searcher.name)) {
+                if (this.config.debug.enabled) logger.info(`Puppeteer 任务 [${searcher.name}] 已加入队列。`);
+                output = await this.puppeteerSemaphore.run(performTask, signal);
+            } else {
+                output = await performTask();
+            }
+
+            if (signal.aborted) return;
+            if (output.error) {
+                collectedErrors.push(output.error);
+                return;
+            }
+
+            if (MAIN_ENGINES.includes(searcher.name)) {
+                completedMainEngines.add(searcher.name);
+            }
+            // [FIX] 检查所有主要引擎是否已完成的逻辑需要放在循环外部，以确保在所有promise解决后进行最终判断。
+            // 此处的实时 abort() 仅对 fastFirstMode 有效。
+
+            const engineConfig = this.config[searcher.name] as { confidenceThreshold?: number };
             const threshold = (engineConfig?.confidenceThreshold > 0) ? engineConfig.confidenceThreshold : this.config.confidenceThreshold;
-            for (const result of output.results) {
-                if (result.similarity >= threshold) highConfidenceResults.push({ engine: output.engine, result });
-                else lowConfidenceResults.push({ engine: output.engine, result });
-            }
-        }
-        
-        let mainResultsFound = false;
-        if (highConfidenceResults.length > 0) {
-            mainResultsFound = true;
-            await session.send(`搜索完成，找到 ${highConfidenceResults.length} 个高匹配度结果:`);
-            
-            let resultsToShow = highConfidenceResults;
-            // [FIX] 增加对 soutubot 的特判，确保其多个高相似度结果都能展示
-            const soutubotResults = highConfidenceResults.filter(r => r.engine === 'soutubot');
-            if (soutubotResults.length > 0) {
-                const otherResults = highConfidenceResults.filter(r => r.engine !== 'soutubot');
-                const limitedSoutubot = soutubotResults.slice(0, this.config.soutubot.maxHighConfidenceResults);
-                if (this.config.search.parallelHighConfidenceStrategy === 'all') {
-                    resultsToShow = [...otherResults, ...limitedSoutubot];
-                } else { // 'first' 策略
-                    const bestOther = otherResults.reduce((prev, curr) => (prev?.result.similarity > curr?.result.similarity ? prev : curr), null);
-                    const bestSoutubot = limitedSoutubot.reduce((prev, curr) => (prev?.result.similarity > curr?.result.similarity ? prev : curr), null);
-                    if(bestOther && (!bestSoutubot || bestOther.result.similarity >= bestSoutubot.result.similarity)) {
-                        resultsToShow = [bestOther];
-                    } else {
-                        resultsToShow = limitedSoutubot;
+            const highConfidenceResults = output.results.filter(r => r.similarity >= threshold);
+
+            if (highConfidenceResults.length > 0) {
+                if (isFastFirstMode) {
+                    if (highConfidenceSent) return;
+                    highConfidenceSent = true;
+                    abortController.abort();
+                    await session.send(`[${output.engine}] 找到高匹配度结果:`);
+                    const { enhancedResult, enhancementId } = await this.enhanceResult(highConfidenceResults[0], sortedEnhancers, processedEnhancements);
+                    if (enhancementId) processedEnhancements.add(enhancementId);
+                    const figureMessage = h('figure');
+                    await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, highConfidenceResults[0], output.engine, botUser, enhancedResult);
+                    await MessageBuilder.sendFigureMessage(session, figureMessage, '发送高匹配度结果失败');
+                } else {
+                    highConfidenceSent = true;
+                    await session.send(`[${output.engine}] 找到高匹配度结果:`);
+                    const figureMessage = h('figure');
+                    let resultsToShow = highConfidenceResults;
+                    if(output.engine === 'soutubot') {
+                        resultsToShow = resultsToShow.slice(0, this.config.soutubot.maxHighConfidenceResults);
+                    } else if (this.config.search.parallelHighConfidenceStrategy === 'first') {
+                        resultsToShow = [resultsToShow.reduce((prev, curr) => prev.similarity > curr.similarity ? prev : curr)];
                     }
+
+                    for (const result of resultsToShow) {
+                        const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
+                        if (enhancementId) processedEnhancements.add(enhancementId);
+                        await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, output.engine, botUser, enhancedResult);
+                    }
+                    await MessageBuilder.sendFigureMessage(session, figureMessage, `[${output.engine}] 发送高匹配度结果失败`);
                 }
-            } else if (highConfidenceResults.length > 1 && this.config.search.parallelHighConfidenceStrategy === 'first') {
-                resultsToShow = [highConfidenceResults.reduce((prev, curr) => prev.result.similarity > curr.result.similarity ? prev : curr)];
+            } else if (output.results.length > 0) {
+                lowConfidenceOutputs.push(output);
             }
-
-
-            const figureMessage = h('figure');
-            const processedEnhancements = new Set<string>();
-            for (const { engine, result } of resultsToShow) {
-                const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
-                if (enhancementId) processedEnhancements.add(enhancementId);
-                await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, engine, botUser, enhancedResult);
-            }
-            await MessageBuilder.sendFigureMessage(session, figureMessage, '发送高匹配度结果失败');
+        });
         
-        } else if (lowConfidenceResults.length > 0) {
-            mainResultsFound = true;
-            await session.send('未找到高匹配度结果，显示如下:');
-            const figureMessage = h('figure');
-            
-            const lowConfidenceByEngine = new Map<SearchEngineName, SearcherResult.Result[]>();
-            for(const {engine, result} of lowConfidenceResults) {
-                if(!lowConfidenceByEngine.has(engine)) lowConfidenceByEngine.set(engine, []);
-                lowConfidenceByEngine.get(engine).push(result);
+        const results = await Promise.allSettled(searchPromises);
+        results.forEach(result => {
+            if (result.status === 'rejected' && result.reason?.name !== 'AbortError') {
+                logger.warn('并行搜索中发生未捕获的错误:', result.reason);
             }
-            
-            const nodePromises = [];
-            for(const [engine, results] of lowConfidenceByEngine.entries()){
-                results.slice(0, this.config.maxResults).forEach(result => {
-                    nodePromises.push(MessageBuilder.buildLowConfidenceNode(this.ctx, result, engine, botUser));
-                });
-            }
-            figureMessage.children.push(...await Promise.all(nodePromises));
-            await MessageBuilder.sendFigureMessage(session, figureMessage, '合并转发低匹配度结果失败');
+        });
+        
+        // [FIX] 移动主要引擎完成后的中断逻辑到所有任务 settle 之后
+        const enabledMainEngines = searchers.filter(s => MAIN_ENGINES.includes(s.name));
+        if (!isFastFirstMode && !this.config.yandex.alwaysAttach && !this.config.ascii2d.alwaysAttach && enabledMainEngines.every(s => completedMainEngines.has(s.name))) {
+            if(!signal.aborted) abortController.abort();
         }
 
-        await this.handleAttachEngines(attachOutputs, botUser, session);
+        await tempFile.cleanup();
+        if (signal.aborted && isFastFirstMode) return;
 
-        if (!mainResultsFound && attachOutputs.every(o => o.results.length === 0)) {
+        if (!highConfidenceSent && lowConfidenceOutputs.length > 0) {
+            // [FIX] 在 'all' 模式下，如果附加引擎被提前中止，不要把它们算作低匹配度结果
+            const finalLowConfidence = lowConfidenceOutputs.filter(o => {
+                const wasAborted = results.find(r => (r.status === 'rejected' && r.reason?.name === 'AbortError'));
+                return !(wasAborted && (o.engine === 'yandex' || o.engine === 'ascii2d'));
+            });
+
+            if (finalLowConfidence.length > 0) {
+                await session.send('未找到高匹配度结果，显示如下:');
+                const figureMessage = h('figure');
+                const nodePromises = finalLowConfidence.flatMap(output => 
+                    output.results.slice(0, this.config.maxResults).map(result => 
+                        MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
+                    )
+                );
+                figureMessage.children.push(...await Promise.all(nodePromises));
+                await MessageBuilder.sendFigureMessage(session, figureMessage, '合并转发低匹配度结果失败');
+            }
+        }
+
+        if (!highConfidenceSent && lowConfidenceOutputs.length === 0) {
             let finalMessage = '未找到任何相关结果。';
             if (collectedErrors.length > 0) finalMessage += '\n\n遇到的问题:\n' + collectedErrors.join('\n');
             await session.send(finalMessage);
