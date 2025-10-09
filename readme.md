@@ -60,8 +60,8 @@ sauce b [图片]  # b 是 soutubot 的别名
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `order` | `object[]` | - | 配置搜图引擎的启用状态和调用顺序。 |
-| `enhancerOrder` | `object[]` | - | 配置图源增强的启用状态和调用顺序。 |
+| `order` | `object` | - | 配置搜图引擎的启用状态和调用顺序。 |
+| `enhancerOrder` | `object` | - | 配置图源增强的启用状态和调用顺序。 |
 | `search.mode` | `string` | `sequential` | 搜索模式: `sequential` (串行) 或 `parallel` (并行)。 |
 | `search.parallelHighConfidenceStrategy` | `string` | `first` | 并行模式下，高匹配度结果的返回策略: `first` (最先) 或 `all` (所有)。 |
 | `confidenceThreshold` | `number` | `85` | 全局高匹配度阈值 (%)。 |
@@ -91,7 +91,7 @@ sauce b [图片]  # b 是 soutubot 的别名
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `apiKeys` | `string[]` | `[]` | SauceNAO 的 API Key 列表。可于注册登录 **[SauceNAO](https://saucenao.com/user.php)** 后，在 `Account` -> `api` 页面生成。 |
+| `apiKeys` | `string` | `[]` | SauceNAO 的 API Key 列表。可于注册登录 **[SauceNAO](https://saucenao.com/user.php)** 后，在 `Account` -> `api` 页面生成。 |
 | `confidenceThreshold` | `number` | `85` | 独立高匹配度阈值 (%)，0 表示使用全局值。 |
 
 #### Trace.moe
@@ -143,7 +143,7 @@ sauce b [图片]  # b 是 soutubot 的别名
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `keyPairs` | `object[]` | `[]` | API Key 对 (User ID 与 Key)。可于登录 **[Gelbooru](https://gelbooru.com/index.php?page=account&s=login&code=00)** 后，在 `My Account` -> `Options` 底部生成。 |
+| `keyPairs` | `object` | `[]` | API Key 对 (User ID 与 Key)。可于登录 **[Gelbooru](https://gelbooru.com/index.php?page=account&s=login&code=00)** 后，在 `My Account` -> `Options` 底部生成。 |
 | `postQuality` | `string` | `sample` | 图片质量: `original`, `sample`, `preview`。 |
 | `maxRating` | `string` | `general`| 最高内容评级: `general`, `sensitive`, `questionable`, `explicit`。 |
 | `enableLinkParsing` | `boolean` | `false`| 启用 `gelbooru.com` 链接自动解析。 |
@@ -152,7 +152,7 @@ sauce b [图片]  # b 是 soutubot 的别名
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `keyPairs` | `object[]` | `[]` | 用户凭据 (用户名与 API Key)。可于登录 **[Danbooru](https://danbooru.donmai.us/login?url=%2F)** 后，在 `My Account` -> 档案底部查看。 |
+| `keyPairs` | `object` | `[]` | 用户凭据 (用户名与 API Key)。可于登录 **[Danbooru](https://danbooru.donmai.us/login?url=%2F)** 后，在 `My Account` -> 档案底部查看。 |
 | `postQuality` | `string` | `sample` | 图片质量: `original`, `sample`, `preview`。 |
 | `maxRating` | `string` | `general`| 最高内容评级: `general`, `sensitive`, `questionable`, `explicit`。 |
 | `enableLinkParsing` | `boolean` | `false`| 启用 `danbooru.donmai.us` 链接自动解析。 |
@@ -174,4 +174,4 @@ sauce b [图片]  # b 是 soutubot 的别名
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `debug.enabled` | `boolean` | `false` | 在控制台输出详细日志。 |
-| `debug.logApiResponses`| `string[]`| `[]` | 记录指定引擎或图源的 API/HTML 原始响应。 |
+| `debug.logApiResponses`| `string`| `[]` | 记录指定引擎或图源的 API/HTML 原始响应。 |

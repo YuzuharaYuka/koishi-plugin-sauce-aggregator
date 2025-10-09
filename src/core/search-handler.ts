@@ -24,7 +24,7 @@ export class SearchHandler {
     ) {
         this.puppeteerSemaphore = new Semaphore(config.puppeteer.concurrency);
         this.enhancerUrlPatterns = {
-            pixiv: /pixiv\.net\/(?:artworks\/|member_illust\.php\?.*illust_id=)/,
+            pixiv: /pixiv\.net\/(?:artworks\/|member_illust\.php\?.*illust_id=)|i\.pximg\.net/,
             danbooru: /danbooru\.donmai\.us\/(?:posts|post\/show)\//,
             gelbooru: /gelbooru\.com\/index\.php\?.*(id=|md5=)/,
             yandere: /yande\.re\/post\/show\//,
@@ -33,7 +33,7 @@ export class SearchHandler {
 
     private getEnhancementId(enhancerName: string, textToSearch: string): string | null {
         const patterns: Record<string, RegExp> = {
-            pixiv: /pixiv\.net\/(?:artworks\/|member_illust\.php\?.*illust_id=)(\d+)/,
+            pixiv: /pixiv\.net\/(?:artworks\/|member_illust\.php\?.*illust_id=)(\d+)|i\.pximg\.net\/img-original\/img\/[^/]+\/[^/]+\/[^/]+\/(?<id>\d+)_p/,
             danbooru: /danbooru\.donmai\.us\/(?:posts|post\/show)\/(\d+)/,
             gelbooru: /gelbooru\.com\/index\.php\?.*(?:id=(\d+)|md5=([a-f0-9]{32}))/,
             yandere: /yande\.re\/post\/show\/(\d+)/,
