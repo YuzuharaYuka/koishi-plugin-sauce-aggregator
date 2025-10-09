@@ -4,7 +4,6 @@ import puppeteer from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import find from 'puppeteer-finder';
 import type { Browser, Page, ScreenshotOptions } from 'puppeteer-core';
-import { USER_AGENT } from './utils'
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -63,12 +62,15 @@ export class PuppeteerManager {
         }
         
         const launchTimeout = this.config.puppeteer.browserLaunchTimeout * 1000;
+        
         const browser = await puppeteer.launch({
             headless: true,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                `--user-agent=${USER_AGENT}`
+                '--disable-infobars', 
+                '--window-size=1920,1080', 
+                '--lang=en-US,en', 
             ],
             executablePath: executablePath,
             protocolTimeout: launchTimeout,
@@ -134,7 +136,6 @@ export class PuppeteerManager {
         }, timeout);
     }
 
-    // 获取一个新的浏览器页面
     public async getPage(): Promise<Page> {
         const browser = await this.getBrowser();
         const page = await browser.newPage();
@@ -148,7 +149,6 @@ export class PuppeteerManager {
         return page;
     }
 
-    // [FIX] 改造 withTempFile，使其返回路径和清理函数，而不是自动清理
     public async createTempFile(buffer: Buffer, fileName: string): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
         const tempFilePath = path.resolve(this.ctx.baseDir, 'data', 'temp', 'sauce-aggregator', `sauce-aggregator-${Date.now()}-${fileName}`);
         await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
@@ -167,7 +167,6 @@ export class PuppeteerManager {
         return { filePath: tempFilePath, cleanup };
     }
     
-    // 检查当前页面是否为人机验证页面
     public async checkForCloudflare(page: Page): Promise<boolean> {
         try {
             const title = await page.title();
@@ -194,7 +193,6 @@ export class PuppeteerManager {
         return false;
     }
 
-    // 保存页面快照（HTML和截图）用于调试
     public async saveErrorSnapshot(page: Page, contextName: string): Promise<void> {
         try {
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -215,7 +213,6 @@ export class PuppeteerManager {
         }
     }
 
-    // 释放并关闭浏览器实例
     public async dispose() {
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);

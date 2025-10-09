@@ -1,4 +1,3 @@
-// --- START OF FILE src/utils.ts ---
 import { Buffer } from 'buffer';
 import { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, encodePNGToStream, make } from 'pureimage';
 import { Readable, PassThrough } from 'stream';
@@ -20,10 +19,11 @@ export async function downloadWithRetry(ctx: Context, url: string, options: { re
     let lastError: Error = null;
     for (let i = 0; i <= options.retries; i++) {
         try {
+            const headers = { 'User-Agent': USER_AGENT, ...options.headers };
             const buffer = await ctx.http.get(url, {
                 responseType: 'arraybuffer',
                 timeout: options.timeout,
-                headers: options.headers,
+                headers: headers,
             });
             return Buffer.from(buffer);
         } catch (error) {
@@ -153,4 +153,3 @@ export function getImageUrlAndName(session: ImageSource, text: string): { url: s
     }
     return { url, name };
 }
-// --- END OF FILE src/utils.ts ---

@@ -1,11 +1,9 @@
-// --- START OF FILE src/enhancers/pixiv.ts ---
 import { Context, Logger, h } from 'koishi'
 import { Config, Pixiv as PixivConfig, Enhancer, EnhancedResult, Searcher } from '../config'
-import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
+import { getImageTypeFromUrl, downloadWithRetry, USER_AGENT } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
-// ... (PixivApiService and PixivIllust interface remain the same)
 interface PixivIllust {
   id: number;
   title: string;
@@ -39,7 +37,7 @@ class PixivApiService {
     this.headers = {
       'app-os': 'ios',
       'app-os-version': '14.6',
-      'user-agent': 'PixivIOSApp/7.13.3 (iOS 14.6; iPhone13,2)',
+      'user-agent': 'PixivIOSApp/7.13.3 (iOS 14.6; iPhone13,2)', // Pixiv API 需要特定的 App UA
       'Referer': 'https://www.pixiv.net/',
     };
   }
@@ -54,7 +52,7 @@ class PixivApiService {
     }).toString();
     try {
       const response = await this.ctx.http.post('https://oauth.secure.pixiv.net/auth/token', data, {
-        headers: { ...this.headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { ...this.headers, 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: this.mainConfig.requestTimeout * 1000,
       });
       if (response.access_token) {
@@ -123,7 +121,6 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
   public readonly name: 'pixiv' = 'pixiv';
   private api: PixivApiService;
   
-  // [FIX] 修正构造函数以避免属性覆盖
   constructor(ctx: Context, mainConfig: Config, subConfig: PixivConfig.Config) {
       super(ctx, mainConfig, subConfig);
       this.api = new PixivApiService(ctx, mainConfig, subConfig);
