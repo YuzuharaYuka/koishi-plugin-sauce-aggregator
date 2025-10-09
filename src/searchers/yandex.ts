@@ -1,4 +1,3 @@
-// --- START OF FILE src/searchers/yandex.ts ---
 import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, Yandex as YandexConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
@@ -6,17 +5,15 @@ import type { Page } from 'puppeteer-core';
 
 const logger = new Logger('sauce-aggregator')
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class Yandex extends Searcher<YandexConfig.Config> {
   public readonly name: SearchEngineName = 'yandex';
   private puppeteer: PuppeteerManager;
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: YandexConfig.Config, puppeteerManager: PuppeteerManager) {
+  constructor(ctx: Context, mainConfig: Config, subConfig: YandexConfig.Config, puppeteerManager: PuppeteerManager) {
     super(ctx, mainConfig, subConfig);
     this.puppeteer = puppeteerManager;
   }
 
-  // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     return this.puppeteer.withTempFile(options.imageBuffer, options.fileName, async (tempFilePath) => {
         const page = await this.puppeteer.getPage();
@@ -67,12 +64,13 @@ export class Yandex extends Searcher<YandexConfig.Config> {
             await page.waitForSelector('.CbirSites-Item', { timeout: this.mainConfig.requestTimeout * 1000 });
             if (this.mainConfig.debug.enabled) logger.info(`[yandex] 结果已加载，正在解析...`);
 
+            const results = await this._parseResults(page, options.maxResults);
+            
+            // [FIX] 将日志记录从原始 HTML 改为解析后的 JSON 数据，使其更易读。
             if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
-                const html = await page.content();
-                logger.info({ '[yandex] Raw HTML Response': html });
+                logger.info(`[yandex] Parsed JSON Response: ${JSON.stringify(results, null, 2)}`);
             }
             
-            const results = await this._parseResults(page, options.maxResults);
             if (this.mainConfig.debug.enabled) logger.info(`[yandex] 成功解析到 ${results.length} 个结果。`);
             return results;
 
@@ -88,7 +86,6 @@ export class Yandex extends Searcher<YandexConfig.Config> {
     });
   }
 
-  // 解析结果页面
   private async _parseResults(page: Page, maxResults: number): Promise<Searcher.Result[]> {
     return page.$$eval(
       '.CbirSites-Item',
@@ -128,4 +125,4 @@ export class Yandex extends Searcher<YandexConfig.Config> {
       maxResults
     );
   }
-}
+} 

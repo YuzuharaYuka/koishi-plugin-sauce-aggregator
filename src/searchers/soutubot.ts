@@ -1,4 +1,3 @@
-// --- START OF FILE src/searchers/soutubot.ts ---
 import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, SoutuBot as SoutuBotConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
@@ -6,17 +5,15 @@ import type { Page } from 'puppeteer-core';
 
 const logger = new Logger('sauce-aggregator')
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
   public readonly name: SearchEngineName = 'soutubot';
   private puppeteer: PuppeteerManager;
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: SoutuBotConfig.Config, puppeteerManager: PuppeteerManager) {
+  constructor(ctx: Context, mainConfig: Config, subConfig: SoutuBotConfig.Config, puppeteerManager: PuppeteerManager) {
     super(ctx, mainConfig, subConfig);
     this.puppeteer = puppeteerManager;
   }
 
-  // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     return this.puppeteer.withTempFile(options.imageBuffer, options.fileName, async (tempFilePath) => {
         const page = await this.puppeteer.getPage();
@@ -46,13 +43,15 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
             await page.waitForSelector(`${firstResultSelector}, ${noResultSelector}`);
             if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 结果已加载，正在解析...`);
 
+            const maxNeeded = Math.max(options.maxResults, this.subConfig.maxHighConfidenceResults || 1);
+            const parsedResults = await this.parseResults(page, maxNeeded);
+
+            // [FIX] 将日志记录从原始 HTML 改为解析后的 JSON 数据，使其更易读，便于排查问题。
             if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
-                const html = await page.content();
-                logger.info({ '[soutubot] Raw HTML Response': html });
+                logger.info(`[soutubot] Parsed JSON Response: ${JSON.stringify(parsedResults, null, 2)}`);
             }
             
-            const maxNeeded = Math.max(options.maxResults, this.subConfig.maxHighConfidenceResults || 1);
-            return await this.parseResults(page, maxNeeded);
+            return this.formatResults(parsedResults);
 
         } catch (error) {
             if (error.message.includes('Cloudflare')) throw error;
@@ -71,9 +70,9 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     });
   }
 
-  // 解析结果页面
-  private async parseResults(page: Page, maxNeeded: number): Promise<Searcher.Result[]> {
-    const rawResults = await page.$$eval('.card-2', (cards: HTMLDivElement[], maxNeeded) => {
+  // 将页面解析逻辑独立出来，返回原始数据结构
+  private async parseResults(page: Page, maxNeeded: number) {
+    return page.$$eval('.card-2', (cards: HTMLDivElement[], maxNeeded) => {
         const langMap = { cn: '中文', jp: '日文', gb: '英文', kr: '韩文' };
         
         return cards.slice(0, maxNeeded).map(card => {
@@ -105,7 +104,10 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
             };
         }).filter(Boolean);
     }, maxNeeded);
+  }
 
+  // 将解析出的原始数据格式化为统一的 Searcher.Result[] 格式
+  private formatResults(rawResults: Awaited<ReturnType<typeof this.parseResults>>): Searcher.Result[] {
     return rawResults.map(res => {
         const details: string[] = [];
         if (res.language) details.push(`语言: ${res.language}`);
