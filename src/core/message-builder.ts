@@ -2,11 +2,9 @@
 
 import { Context, h, Logger } from 'koishi';
 import { Config, EnhancedResult, SearchEngineName, Searcher as SearcherResult } from '../config';
+import { getImageTypeFromUrl } from '../utils';
 
 const logger = new Logger('sauce-aggregator:message-builder');
-
-// [REMOVED] 增强逻辑已移至 SearchHandler 以进行并发控制。
-// getEnhancementId 已移至 SearchHandler。
 
 // 创建包含缩略图和文本描述的基础消息内容
 export async function createResultContent(ctx: Context, result: SearcherResult.Result, engineName?: SearchEngineName): Promise<h[]> {
@@ -26,7 +24,9 @@ export async function createResultContent(ctx: Context, result: SearcherResult.R
 
     try {
       const imageBuffer = Buffer.from(await ctx.http.get(result.thumbnail, { responseType: 'arraybuffer' }));
-      return [h.image(imageBuffer, 'image/jpeg'), textNode];
+      // [FIX] 修正：动态获取图片类型，而不是硬编码为 'image/jpeg'
+      const imageType = getImageTypeFromUrl(result.thumbnail);
+      return [h.image(imageBuffer, imageType), textNode];
     } catch (e) {
       logger.warn(`缩略图下载失败 ${result.thumbnail}:`, e.message);
       return [h('p', '[!] 缩略图加载失败'), textNode];
@@ -70,7 +70,6 @@ export async function buildHighConfidenceMessage(
     }
   }
 
-  // [REFACTOR] 增强逻辑已移出，现在只负责渲染已增强的数据
   if (enhancedData) {
       if (enhancedData.imageBuffer) {
           figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType)))

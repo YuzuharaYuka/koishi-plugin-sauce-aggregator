@@ -1,4 +1,3 @@
-// --- START OF FILE src/enhancers/danbooru.ts ---
 import { Context, Logger, h } from 'koishi'
 import { Config, Danbooru as DanbooruConfig, Enhancer, EnhancedResult, Searcher } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
@@ -32,19 +31,16 @@ interface DanbooruPost {
   message?: string;
 }
 
-// [FIX] 修正：使用 'extends' 继承抽象基类，而不是 'implements'
 export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
   public readonly name: 'danbooru' = 'danbooru';
   public readonly needsPuppeteer: boolean = true;
   private puppeteer: PuppeteerManager;
   
-  constructor(public ctx: Context, public mainConfig: Config, public subConfig: DanbooruConfig.Config, puppeteerManager: PuppeteerManager) {
-    // [FIX] 调用父类构造函数
+  constructor(ctx: Context, mainConfig: Config, subConfig: DanbooruConfig.Config, puppeteerManager: PuppeteerManager) {
     super(ctx, mainConfig, subConfig);
     this.puppeteer = puppeteerManager;
   }
 
-  // 增强单个搜索结果，获取 Danbooru 作品详情
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
     const danbooruUrl = this.findDanbooruUrl(result);
     if (!danbooruUrl) return null;
@@ -71,7 +67,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       
       await page.goto('https://danbooru.donmai.us', { waitUntil: 'domcontentloaded' });
       
-      const jsonContent = await page.evaluate(async (url) => {
+      const evaluationPromise = page.evaluate(async (url) => {
         try {
             const res = await fetch(url);
             if (!res.ok) {
@@ -85,12 +81,20 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
             }
             return await res.text();
         } catch (e) {
-            throw new Error(`Fetch 失败: ${e.message}`);
+            return JSON.stringify({ isError: true, message: e.message });
         }
       }, apiUrl);
 
+      const timeoutPromise = new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error(`页面内 API 请求超时 (${this.mainConfig.requestTimeout}秒)。`)), this.mainConfig.requestTimeout * 1000)
+      );
+
+      const jsonContent = await Promise.race([evaluationPromise, timeoutPromise]);
       const responseData = JSON.parse(jsonContent);
 
+      if (responseData.isError) {
+        throw new Error(`页面内 Fetch 失败: ${responseData.message}`);
+      }
       if (responseData.isCloudflare) {
           throw new Error('检测到 Cloudflare 人机验证页面。这通常由您的网络环境或代理 IP 引起。请尝试更换网络环境或暂时禁用此图源。');
       }
@@ -117,7 +121,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
         
         const imageBase64 = await page.evaluate(async (url, retries) => {
             const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-            let lastError: Error = null;
+            let lastError: Error | null = null;
 
             for (let i = 0; i <= retries; i++) {
                 try {
@@ -140,14 +144,14 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
                     }
                 }
             }
-            throw new Error(`下载失败 (${retries + 1}次尝试)。最后错误: ${lastError.message}`);
+            return { isError: true, message: `下载失败 (${retries + 1}次尝试)。最后错误: ${lastError?.message}` };
         }, downloadUrl, this.mainConfig.enhancerRetryCount);
 
-        if (!imageBase64) {
-          throw new Error('在浏览器上下文中下载图片或转换 Base64 失败。');
+        if (typeof imageBase64 === 'object' && imageBase64.isError) {
+          throw new Error(`在浏览器上下文中下载图片失败: ${imageBase64.message}`);
         }
         
-        imageBuffer = Buffer.from(imageBase64, 'base64');
+        imageBuffer = Buffer.from(imageBase64 as string, 'base64');
         if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
       }
       
@@ -181,7 +185,6 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     }
   }
   
-  // 从结果中查找有效的 Danbooru 链接
   private findDanbooruUrl(result: Searcher.Result): string | null {
     const urlRegex = /(https?:\/\/danbooru\.donmai\.us\/(posts|post\/show)\/\d+)/;
     if (result.url && urlRegex.test(result.url)) return result.url;
@@ -194,13 +197,11 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     return null;
   }
 
-  // 从 Danbooru 链接中解析帖子 ID
   private parsePostId(url: string): string | null {
-    const match = url.match(/(\d+)/g);
-    return match ? match[match.length - 1] : null;
+    const match = url.match(/\/(\d+)(?:[?#]|$)/);
+    return match ? match[1] : null;
   }
   
-  // 构建展示给用户的详细信息元素
   private buildDetailNodes(post: DanbooruPost): h[] {
     const info: string[] = [];
     const formatTags = (tagString: string) => (tagString || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean).join(', ');

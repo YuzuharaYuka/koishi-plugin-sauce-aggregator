@@ -151,7 +151,7 @@ export class PuppeteerManager {
 
     // [FEAT] 增加可复用的临时文件处理器
     public async withTempFile<T>(buffer: Buffer, fileName: string, action: (filePath: string) => Promise<T>): Promise<T> {
-        const tempFilePath = path.resolve(this.ctx.baseDir, 'temp', `sauce-aggregator-${Date.now()}-${fileName}`);
+        const tempFilePath = path.resolve(this.ctx.baseDir, 'data', 'temp', 'sauce-aggregator', `sauce-aggregator-${Date.now()}-${fileName}`);
         let tempFileCreated = false;
         try {
             await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
