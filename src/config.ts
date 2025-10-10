@@ -10,7 +10,7 @@ export interface SearchOptions {
   imageBuffer: Buffer;
   fileName: string;
   maxResults: number;
-  tempFilePath?: string; // [FEAT] 增加可选的临时文件路径，用于共享
+  tempFilePath?: string;
 }
 
 // 搜图引擎返回结果的统一格式
@@ -74,6 +74,7 @@ export abstract class Searcher<T = any> {
 
 // 插件的完整配置接口
 export interface Config {
+  proxy: string; // [FEAT] 新增独立代理配置
   order: { engine: SearchEngineName; enabled: boolean }[]
   enhancerOrder: { engine: EnhancerName; enabled: boolean }[]
   confidenceThreshold: number
@@ -176,8 +177,13 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('搜索设置'),
 
   Schema.object({
+    proxy: Schema.string().default('http://127.0.0.1:7890').description(
+      '**独立代理配置**：`http://<ip>:<port>`或`socks5://<ip>:<port>`<br>' +
+      '该配置只影响`danbooru`图源,`soutubot`,`yandex`,`ascii2d`引擎请求。<br>' +
+      '其余`ctx.http`请求仍使用`proxy-agent`全局代理配置。'
+    ),
     puppeteer: puppeteerConfig,
-  }).description('浏览器设置'),
+  }).description('网络与浏览器'),
 
   Schema.object({
     saucenao: Schema.object({

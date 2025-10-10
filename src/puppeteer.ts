@@ -8,6 +8,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 const logger = new Logger('sauce-aggregator:puppeteer')
+
 puppeteer.use(StealthPlugin())
 
 // 负责管理 Puppeteer 浏览器实例的生命周期、并发和页面创建
@@ -23,7 +24,6 @@ export class PuppeteerManager {
         this.config = config;
     }
 
-    // 预初始化常驻浏览器实例
     public async initialize(): Promise<void> {
         if (this._isInitialized || !this.config.puppeteer.persistentBrowser) return;
 
@@ -63,15 +63,24 @@ export class PuppeteerManager {
         
         const launchTimeout = this.config.puppeteer.browserLaunchTimeout * 1000;
         
+        const args = [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-infobars',
+            '--window-size=1920,1080',
+            '--lang=en-US,en',
+        ];
+
+        // [FIX] 彻底移除对 ctx.http.config 的所有错误访问，只依赖插件自身的代理配置
+        const proxyUrl = this.config.proxy;
+        if (proxyUrl) {
+            if (this.config.debug.enabled) logger.info(`[puppeteer] 将使用独立代理: ${proxyUrl}`);
+            args.push(`--proxy-server=${proxyUrl}`);
+        }
+
         const browser = await puppeteer.launch({
             headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-infobars', 
-                '--window-size=1920,1080', 
-                '--lang=en-US,en', 
-            ],
+            args: args,
             executablePath: executablePath,
             protocolTimeout: launchTimeout,
             timeout: launchTimeout,
