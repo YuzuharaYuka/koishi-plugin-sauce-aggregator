@@ -1,17 +1,17 @@
 import { Context, Logger, h } from 'koishi'
 import { Config, Danbooru as DanbooruConfig, Enhancer, EnhancedResult, Searcher } from '../config'
-import type { PuppeteerManager } from '../puppeteer'
-import { getImageTypeFromUrl } from '../utils'
+import { getImageTypeFromUrl, USER_AGENT } from '../utils'
+import type { GotScraping } from 'got-scraping'
 
 const logger = new Logger('sauce-aggregator')
+
+let gotScraping: GotScraping;
 
 interface DanbooruPost {
   id: number;
   created_at: string;
-  uploader_id: number;
   score: number;
   source: string;
-  md5: string;
   rating: 'g' | 's' | 'q' | 'e';
   image_width: number;
   image_height: number;
@@ -31,72 +31,53 @@ interface DanbooruPost {
   message?: string;
 }
 
-// [FEAT] 封装浏览器环境内的 fetch 逻辑，增加健壮性
-async function fetchInBrowser(page, url: string, type: 'json' | 'image', retries: number): Promise<any> {
-    return page.evaluate(async (url, type, retries) => {
-        const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-        let lastError: Error | null = null;
-
-        for (let i = 0; i <= retries; i++) {
-            try {
-                const res = await fetch(url, { mode: 'cors' });
-
-                if (!res.ok) {
-                    throw new Error(`请求失败，状态码: ${res.status}`);
-                }
-
-                // 统一的 Cloudflare 检测
-                const contentType = res.headers.get('Content-Type') || '';
-                if (contentType.includes('text/html')) {
-                    const text = await res.text();
-                    if (/Verifying you are human|cdn-cgi\/challenge-platform/i.test(text)) {
-                        return { isCloudflare: true };
-                    }
-                    // 如果期望的是图片或JSON，但收到了HTML，则认为是错误
-                    if (type === 'image' || type === 'json') {
-                         throw new Error(`预期得到 ${type}，但收到了 HTML 页面。`);
-                    }
-                }
-                
-                if (type === 'json') {
-                    return res.json();
-                }
-
-                if (type === 'image') {
-                    if(!contentType.startsWith('image/')) {
-                        throw new Error(`预期得到图片，但收到了 ${contentType} 类型。`);
-                    }
-                    const buffer = await res.arrayBuffer();
-                    let binary = '';
-                    const bytes = new Uint8Array(buffer);
-                    for (let j = 0; j < bytes.byteLength; j++) {
-                        binary += String.fromCharCode(bytes[j]);
-                    }
-                    return { base64: btoa(binary) };
-                }
-
-            } catch (error) {
-                lastError = error;
-                if (i < retries) {
-                    // 在浏览器控制台打印日志，便于调试
-                    console.log(`[sauce-aggregator/danbooru] 尝试 ${i + 1} 失败 (URL: ${url}): ${error.message}，2秒后重试...`);
-                    await sleep(2000);
-                }
-            }
-        }
-        return { isError: true, message: `经过 ${retries + 1} 次尝试后失败。最后错误: ${lastError?.message}` };
-    }, url, type, retries);
-}
-
-
 export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
   public readonly name: 'danbooru' = 'danbooru';
-  public readonly needsPuppeteer: boolean = true;
-  private puppeteer: PuppeteerManager;
+  public readonly needsPuppeteer: boolean = false;
   
-  constructor(ctx: Context, mainConfig: Config, subConfig: DanbooruConfig.Config, puppeteerManager: PuppeteerManager) {
+  private _gotInstance: GotScraping | null = null;
+
+  constructor(ctx: Context, mainConfig: Config, subConfig: DanbooruConfig.Config) {
     super(ctx, mainConfig, subConfig);
-    this.puppeteer = puppeteerManager;
+  }
+
+  private async _getGotInstance(isCdn: boolean = false): Promise<GotScraping> {
+    // For CDN requests, we don't need the prefixUrl
+    if (isCdn) {
+        gotScraping ??= (await import('got-scraping')).gotScraping;
+        const proxyUrl = this.mainConfig.proxy;
+        return gotScraping.extend({
+            timeout: { request: this.mainConfig.requestTimeout * 1000 },
+            retry: { limit: this.mainConfig.enhancerRetryCount },
+            proxyUrl: proxyUrl,
+            headerGeneratorOptions: {
+                browsers: [{ name: 'chrome', minVersion: 100 }],
+                devices: ['desktop'],
+                operatingSystems: ['windows'],
+            },
+        });
+    }
+
+    if (this._gotInstance) return this._gotInstance;
+    
+    gotScraping ??= (await import('got-scraping')).gotScraping;
+    
+    const proxyUrl = this.mainConfig.proxy;
+    if (this.mainConfig.debug.enabled && proxyUrl) {
+        logger.info(`[danbooru] got-scraping 将使用独立代理: ${proxyUrl}`);
+    }
+
+    return this._gotInstance = gotScraping.extend({
+        prefixUrl: 'https://danbooru.donmai.us',
+        timeout: { request: this.mainConfig.requestTimeout * 1000 },
+        retry: { limit: this.mainConfig.enhancerRetryCount },
+        proxyUrl: proxyUrl,
+        headerGeneratorOptions: {
+            browsers: [{ name: 'chrome', minVersion: 100 }],
+            devices: ['desktop'],
+            operatingSystems: ['windows'],
+        },
+    });
   }
 
   public async enhance(result: Searcher.Result): Promise<EnhancedResult | null> {
@@ -109,97 +90,107 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       return null;
     }
     
-    const page = await this.puppeteer.getPage();
-    
     try {
-      let post: DanbooruPost;
-      let imageBuffer: Buffer;
-      
-      const keyPair = this.subConfig.keyPairs[Math.floor(Math.random() * this.subConfig.keyPairs.length)];
-      const apiBaseUrl = `https://danbooru.donmai.us/posts/${postId}.json`;
-      const apiUrl = (keyPair?.username && keyPair?.apiKey)
-        ? `${apiBaseUrl}?login=${keyPair.username}&api_key=${keyPair.apiKey}` 
-        : apiBaseUrl;
+        const post = await this.makeApiRequest(postId);
 
-      if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 获取 API: ${apiBaseUrl}`);
-      
-      await page.goto('https://danbooru.donmai.us', { waitUntil: 'domcontentloaded' });
-      
-      const apiPromise = fetchInBrowser(page, apiUrl, 'json', 0); // API 通常不应重试，以快速失败
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`页面内 API 请求超时 (${this.mainConfig.requestTimeout}秒)。`)), this.mainConfig.requestTimeout * 1000)
-      );
-      
-      const responseData = await Promise.race([apiPromise, timeoutPromise]);
+        const ratingMap = { g: 'general', s: 'sensitive', q: 'questionable', e: 'explicit' };
+        const ratingHierarchy = { general: 1, sensitive: 2, questionable: 3, explicit: 4 };
+        const postRating = ratingMap[post.rating] as keyof typeof ratingHierarchy;
+        const postRatingLevel = ratingHierarchy[postRating];
+        const maxAllowedLevel = ratingHierarchy[this.subConfig.maxRating];
 
-      if (responseData.isCloudflare) {
-          throw new Error('检测到 Cloudflare 人机验证页面。这通常由您的网络环境或代理 IP 引起。请尝试更换网络环境或暂时禁用此图源。');
-      }
-      if (responseData.isError) {
-        throw new Error(`页面内 Fetch 失败: ${responseData.message}`);
-      }
-      
-      post = responseData as DanbooruPost;
-
-      if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
-        logger.info(`[danbooru] API 响应: ${JSON.stringify(post, null, 2)}`);
-      }
-      
-      if (post.success === false) throw new Error(`API 返回错误: ${post.message || '凭据验证失败'}`);
-      if (!post.id) throw new Error(`API 未返回有效的帖子对象。`);
-
-      let downloadUrl: string;
-      switch(this.subConfig.postQuality) {
-        case 'original': downloadUrl = post.file_url; break;
-        case 'sample': downloadUrl = post.large_file_url; break;
-        case 'preview': downloadUrl = post.preview_file_url; break;
-        default: downloadUrl = post.large_file_url; break;
-      }
-
-      if (downloadUrl) {
-        if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 正在通过页面内 fetch 下载图源图片: ${downloadUrl}`);
-        
-        const imageResponse = await fetchInBrowser(page, downloadUrl, 'image', this.mainConfig.enhancerRetryCount);
-
-        if (imageResponse.isCloudflare) {
-            throw new Error('下载图片时检测到 Cloudflare 人机验证页面。');
+        if (postRatingLevel > maxAllowedLevel) {
+            if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 帖子 ${post.id} 的评级 '${postRating}' 超出设置 '${this.subConfig.maxRating}'，已跳过。`);
+            return { details: [h.text(`[!] Danbooru 图源的评级 (${postRating}) 超出设置，已隐藏详情。`)] };
         }
-        if (imageResponse.isError) {
-          throw new Error(`在浏览器上下文中下载图片失败: ${imageResponse.message}`);
+
+        const details = this.buildDetailNodes(post);
+
+        let downloadUrl: string;
+        switch(this.subConfig.postQuality) {
+            case 'original': downloadUrl = post.file_url; break;
+            case 'sample': downloadUrl = post.large_file_url; break;
+            case 'preview': downloadUrl = post.preview_file_url; break;
+            default: downloadUrl = post.large_file_url; break;
         }
-        
-        imageBuffer = Buffer.from(imageResponse.base64, 'base64');
-        if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 图片下载并转换成功，大小: ${imageBuffer.length} 字节。`);
-      }
+
+        let imageBuffer: Buffer | undefined;
+        if (downloadUrl) {
+            if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 正在下载图源图片: ${downloadUrl}`);
+            
+            const got = await this._getGotInstance(true);
+            const keyPair = this.subConfig.keyPairs?.[0];
+            const searchParams = (keyPair?.username && keyPair.apiKey) ? {
+                login: keyPair.username,
+                api_key: keyPair.apiKey,
+            } : undefined;
+
+            imageBuffer = await got(downloadUrl, { searchParams }).buffer();
+        }
       
-      const ratingMap = { g: 'general', s: 'sensitive', q: 'questionable', e: 'explicit' };
-      const ratingHierarchy = { general: 1, sensitive: 2, questionable: 3, explicit: 4 };
-      const postRating = ratingMap[post.rating] as keyof typeof ratingHierarchy;
-      const postRatingLevel = ratingHierarchy[postRating];
-      const maxAllowedLevel = ratingHierarchy[this.subConfig.maxRating];
-
-      if (postRatingLevel > maxAllowedLevel) {
-        if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 帖子 ${post.id} 的评级 '${postRating}' 超出设置 '${this.subConfig.maxRating}'，已跳过。`);
-        return { details: [h.text(`[!] Danbooru 图源的评级 (${postRating}) 超出设置，已隐藏详情。`)] };
-      }
-
-      const details = this.buildDetailNodes(post);
-      const imageType = getImageTypeFromUrl(post.file_url);
-
-      return { details, imageBuffer, imageType };
+        const imageType = getImageTypeFromUrl(post.file_url);
+        return { details, imageBuffer, imageType };
       
     } catch (error) {
-      logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, error.message);
-      // 只有在非 Cloudflare 错误时才保存快照，避免无效截图
-      if (this.mainConfig.debug.enabled && !error.message.includes('Cloudflare')) {
-          await this.puppeteer.saveErrorSnapshot(page, this.name);
+      // [FIX] 精简错误日志，只保留核心信息
+      const errorMessage = error.name === 'TimeoutError' 
+          ? `请求超时 (${this.mainConfig.requestTimeout}秒)`
+          : (error.message || '未知错误');
+
+      logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, errorMessage);
+      
+      if (this.mainConfig.debug.enabled && error.response) {
+          logger.info(`[danbooru] 详细错误响应:
+  - Status: ${error.response.statusCode}
+  - Body: ${error.response.body}`);
       }
-      throw new Error(`[danbooru] 处理失败: ${error.message}`);
-    } finally {
-      if (page && !page.isClosed()) await page.close();
+      throw new Error(`[danbooru] 处理失败: ${errorMessage}`);
     }
   }
   
+  private async makeApiRequest(postId: string): Promise<DanbooruPost> {
+    const got = await this._getGotInstance();
+    const keyPair = this.subConfig.keyPairs?.[0];
+    const hasAuth = keyPair?.username && keyPair.apiKey;
+    
+    const onlyFields = [
+        'id', 'created_at', 'score', 'source', 'rating', 'image_width',
+        'image_height', 'tag_string', 'tag_string_general', 'tag_string_artist',
+        'tag_string_character', 'tag_string_copyright', 'tag_string_meta',
+        'file_ext', 'file_size', 'fav_count', 'file_url', 'large_file_url',
+        'preview_file_url',
+    ].join(',');
+
+    const searchParams = { only: onlyFields } as Record<string, string>;
+    let authMethod = 'None';
+
+    if (hasAuth) {
+        searchParams.login = keyPair.username;
+        searchParams.api_key = keyPair.apiKey;
+        authMethod = 'URL Params (API Key)';
+    }
+
+    const url = `posts/${postId}.json`;
+    const requestOptions = { searchParams };
+
+    if (this.mainConfig.debug.enabled) {
+        const fullUrl = `${got.defaults.options.prefixUrl}/${url}?${new URLSearchParams(searchParams).toString()}`;
+        logger.info(`[danbooru] 发起 API 请求:
+  - Method: GET
+  - URL: ${fullUrl}
+  - Auth: ${authMethod}`);
+    }
+
+    const post = await got.get(url, requestOptions).json<DanbooruPost>();
+
+    if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
+        logger.info(`[danbooru] API 响应: ${JSON.stringify(post, null, 2)}`);
+    }
+
+    if (post.success === false) throw new Error(`API 返回错误: ${post.message || '未知错误'}`);
+    return post;
+  }
+
   private findDanbooruUrl(result: Searcher.Result): string | null {
     const urlRegex = /(https?:\/\/danbooru\.donmai\.us\/(posts|post\/show)\/\d+)/;
     if (result.url && urlRegex.test(result.url)) return result.url;

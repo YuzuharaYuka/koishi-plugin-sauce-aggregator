@@ -1,4 +1,3 @@
-// --- START OF FILE src/index.ts ---
 import { Context, Logger, h, Session } from 'koishi'
 import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName, Searcher as SearcherResult } from './config'
 import { SauceNAO } from './searchers/saucenao'
@@ -52,7 +51,7 @@ export const usage = `
 *	部分引擎可能需要配置代理才可用, **http** 相关报错请先检查代理网络设置。
 *	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
 *	\`saucenao\` 引擎, \`gelbooru\` , \`danbooru\` , \`pixiv\` 图源需要配置 API Key 或 Token 才可用。 
-*	\`yandex\` , \`ascii2d\` ,  \`soutubot\` 引擎, \`danbooru\` 图源需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
+*	\`yandex\` , \`ascii2d\` ,  \`soutubot\` 引擎需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
 `
 
 export function apply(ctx: Context, config: Config) {
@@ -85,7 +84,7 @@ export function apply(ctx: Context, config: Config) {
 
       if (areKeysProvided) {
           const constructorArgs: any[] = [ctx, config, config[name]];
-          if (name === 'danbooru') constructorArgs.push(puppeteerManager);
+          // [FIX] DanbooruEnhancer 不再需要 puppeteerManager
           allEnhancers[name] = new entry.constructor(...constructorArgs);
       } else {
           logger.info(`[${name}] ${entry.messageName}未配置任何${entry.keyName}，将无法启用。`);
@@ -242,7 +241,6 @@ export function apply(ctx: Context, config: Config) {
       for (const service of linkParsingRegistry) {
         if (service.enhancer && service.config.enableLinkParsing && service.regex.test(url)) {
           if (config.debug.enabled) logger.info(`[${service.name}] 检测到链接，开始自动解析: ${url}`);
-          // [FEAT] 增加即时交互反馈
           await session.send('检测到图源链接，正在解析，请稍候...');
           try {
             const dummyResult: SearcherResult.Result = { url, similarity: 100, thumbnail: '', source: '链接解析' };
@@ -277,10 +275,10 @@ export function apply(ctx: Context, config: Config) {
   // 注册生命周期钩子
   ctx.on('ready', async () => {
     if (config.puppeteer.persistentBrowser) {
+        // [FIX] 更新浏览器预加载逻辑，Danbooru不再需要Puppeteer
         const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
         const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
-        const needsPuppeteerForEnhance = sortedEnhancers.some(e => e.name === 'danbooru');
-        if (needsPuppeteerForSearch || needsPuppeteerForEnhance) {
+        if (needsPuppeteerForSearch) {
             await puppeteerManager.initialize();
         }
     }
