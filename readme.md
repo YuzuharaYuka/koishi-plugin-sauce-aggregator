@@ -26,7 +26,7 @@
 | 依赖项 | 引擎 | 图源 |
 | :--- | :--- | :--- |
 | **API 密钥/凭据** | `SauceNAO` | `Gelbooru`, `Danbooru`, `Pixiv` |
-| **浏览器环境 (Puppeteer)** | `SoutuBot`, `Yandex`, `Ascii2D` | `Danbooru` |
+| **浏览器环境 (Puppeteer)** | `SoutuBot`, `Yandex`, `Ascii2D` | - |
 
 ## 指令说明
 
@@ -73,12 +73,13 @@ sauce b [图片]  # b 是 soutubot 的别名
 
 ---
 
-### 浏览器设置
+### 网络与浏览器
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
+| `proxy` | `string` | `http://127.0.0.1:7890` | **独立代理**。仅影响 `Danbooru` 图源及 `SoutuBot`, `Yandex`, `Ascii2D` 等需要浏览器的引擎。其他请求仍遵循全局代理 (如 `proxy-agent`)。 |
 | `puppeteer.persistentBrowser` | `boolean` | `false` | 开启后，浏览器将常驻后台，加快响应速度但占用资源。 |
-| `puppeteer.concurrency` | `number` | `1` | 浏览器并发任务数上限，建议为 1。 |
+| `puppeteer.concurrency` | `number` | `1` | 浏览器并发任务数上限。对大多数用户而言，`1` 是最稳定高效的选择。 |
 | `puppeteer.browserCloseTimeout` | `number` | `30` | (非常驻模式) 任务结束后，等待多少秒关闭浏览器。 |
 | `puppeteer.browserLaunchTimeout` | `number` | `90` | 等待浏览器进程启动的最长时间 (秒)。 |
 | `puppeteer.chromeExecutablePath`| `string` | - | (可选) 指定本地浏览器路径，留空则自动检测。 |
