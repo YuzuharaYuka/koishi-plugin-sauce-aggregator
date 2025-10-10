@@ -1,3 +1,5 @@
+// --- START OF FILE src/utils.ts ---
+
 import { Buffer } from 'buffer';
 import { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, encodePNGToStream, make } from 'pureimage';
 import { Readable, PassThrough } from 'stream';
@@ -14,6 +16,30 @@ interface ImageSource {
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
+// 标准化网络错误信息
+export function formatNetworkError(error: any): string {
+    if (error.code === 'ETIMEDOUT' || /timeout/i.test(error.message)) {
+      return '请求超时，请检查网络或代理设置。';
+    }
+    if (error.response) {
+      const status = error.response.status || error.response.statusCode;
+      if (status === 401 || status === 403) {
+        return '认证失败 (401/403)，请检查 API Key 或凭据配置。';
+      }
+      if (status === 429) {
+        return '请求过于频繁 (429)，请稍后再试。';
+      }
+      if (status >= 500) {
+        return `服务提供方服务器错误 (${status})，请稍后再试。`;
+      }
+      return `网络请求失败，状态码: ${status}。`;
+    }
+    if (error.name === 'TimeoutError') {
+        return `页面操作超时，目标网站可能无响应或加载缓慢。`;
+    }
+    return error.message || '发生未知网络错误。';
+}
+  
 // 带重试逻辑的通用文件下载函数
 export async function downloadWithRetry(ctx: Context, url: string, options: { retries: number; timeout: number, headers?: Record<string, string> }): Promise<Buffer> {
     let lastError: Error = null;
@@ -153,3 +179,4 @@ export function getImageUrlAndName(session: ImageSource, text: string): { url: s
     }
     return { url, name };
 }
+// --- END OF FILE src/utils.ts ---

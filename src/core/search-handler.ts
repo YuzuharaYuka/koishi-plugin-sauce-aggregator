@@ -1,8 +1,11 @@
+// --- START OF FILE src/core/search-handler.ts ---
+
 import { Context, h, Logger } from 'koishi';
 import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer, EnhancedResult } from '../config';
 import * as MessageBuilder from './message-builder';
 import { Semaphore } from './semaphore';
 import { PuppeteerManager } from '../puppeteer';
+import { formatNetworkError } from '../utils';
 
 const logger = new Logger('sauce-aggregator:handler');
 
@@ -84,7 +87,7 @@ export class SearchHandler {
                 return { enhancedResult: enhancedData, enhancementId };
               }
             } catch (e) {
-              logger.warn(`[${enhancer.name}] 图源处理时发生错误:`, e);
+              logger.warn(`[${enhancer.name}] 图源处理时发生错误:`, formatNetworkError(e));
             }
             break; 
         }
@@ -96,7 +99,7 @@ export class SearchHandler {
           const results = await searcher.search(options);
           return { engine: searcher.name, results, error: null };
         } catch (error) {
-          const errorMessage = `[${searcher.name}] 引擎搜索失败: ${error.message}`;
+          const errorMessage = `[${searcher.name}] 引擎搜索失败: ${formatNetworkError(error)}`;
           logger.warn(errorMessage, this.config.debug.enabled ? error : '');
           return { engine: searcher.name, results: [], error: errorMessage };
         }
@@ -227,7 +230,14 @@ export class SearchHandler {
         await this.handleAttachEngines(finalAttachOutputs, botUser, session);
 
         if (!mainResultsFound && finalAttachOutputs.every(o => o.results.length === 0)) {
-            let finalMessage = '未找到任何相关结果。';
+            let finalMessage: string;
+            if (isSingleEngineSearch) {
+                const engineName = mainSearchers[0].name;
+                finalMessage = `[${engineName}] 未找到任何相关结果。`;
+            } else {
+                finalMessage = '未找到任何相关结果。';
+            }
+
             if (collectedErrors.length > 0) {
                 finalMessage += '\n\n遇到的问题:\n' + collectedErrors.join('\n');
             }
@@ -348,9 +358,15 @@ export class SearchHandler {
         const lowConfidenceOutputs: SearchOutput[] = [];
         const processedEnhancements = new Set<string>();
         const completedMainEngines = new Set<SearchEngineName>();
+        
+        let tempFile: { filePath: string; cleanup: () => Promise<void> } | null = null;
+        let optionsWithTempFile = options;
+        const needsPuppeteer = searchers.some(s => PUPPETEER_ENGINES.includes(s.name));
 
-        const tempFile = await this.puppeteerManager.createTempFile(options.imageBuffer, options.fileName);
-        const optionsWithTempFile = { ...options, tempFilePath: tempFile.filePath };
+        if (needsPuppeteer) {
+            tempFile = await this.puppeteerManager.createTempFile(options.imageBuffer, options.fileName);
+            optionsWithTempFile = { ...options, tempFilePath: tempFile.filePath };
+        }
 
         const searchPromises = searchers.map(async (searcher) => {
             if (signal.aborted) return;
@@ -361,7 +377,6 @@ export class SearchHandler {
             };
 
             let output: SearchOutput;
-            // [FIX] 恢复对 Puppeteer 任务的并发控制和日志记录
             if (PUPPETEER_ENGINES.includes(searcher.name)) {
                 if (this.config.debug.enabled) logger.info(`Puppeteer 任务 [${searcher.name}] 已加入队列。`);
                 output = await this.puppeteerSemaphore.run(performTask, signal);
@@ -378,8 +393,6 @@ export class SearchHandler {
             if (MAIN_ENGINES.includes(searcher.name)) {
                 completedMainEngines.add(searcher.name);
             }
-            // [FIX] 检查所有主要引擎是否已完成的逻辑需要放在循环外部，以确保在所有promise解决后进行最终判断。
-            // 此处的实时 abort() 仅对 fastFirstMode 有效。
 
             const engineConfig = this.config[searcher.name] as { confidenceThreshold?: number };
             const threshold = (engineConfig?.confidenceThreshold > 0) ? engineConfig.confidenceThreshold : this.config.confidenceThreshold;
@@ -426,17 +439,15 @@ export class SearchHandler {
             }
         });
         
-        // [FIX] 移动主要引擎完成后的中断逻辑到所有任务 settle 之后
         const enabledMainEngines = searchers.filter(s => MAIN_ENGINES.includes(s.name));
         if (!isFastFirstMode && !this.config.yandex.alwaysAttach && !this.config.ascii2d.alwaysAttach && enabledMainEngines.every(s => completedMainEngines.has(s.name))) {
             if(!signal.aborted) abortController.abort();
         }
 
-        await tempFile.cleanup();
+        if(tempFile) await tempFile.cleanup();
         if (signal.aborted && isFastFirstMode) return;
 
         if (!highConfidenceSent && lowConfidenceOutputs.length > 0) {
-            // [FIX] 在 'all' 模式下，如果附加引擎被提前中止，不要把它们算作低匹配度结果
             const finalLowConfidence = lowConfidenceOutputs.filter(o => {
                 const wasAborted = results.find(r => (r.status === 'rejected' && r.reason?.name === 'AbortError'));
                 return !(wasAborted && (o.engine === 'yandex' || o.engine === 'ascii2d'));
@@ -464,3 +475,4 @@ export class SearchHandler {
         }
     }
 }
+// --- END OF FILE src/core/search-handler.ts ---

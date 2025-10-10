@@ -1,3 +1,5 @@
+// --- START OF FILE src/index.ts ---
+
 import { Context, Logger, h, Session } from 'koishi'
 import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName, Searcher as SearcherResult } from './config'
 import { SauceNAO } from './searchers/saucenao'
@@ -59,10 +61,10 @@ export function apply(ctx: Context, config: Config) {
 
   // 初始化所有 searchers 和 enhancers
   const allSearchers: Record<string, Searcher> = {};
-  if (config.saucenao.apiKeys && config.saucenao.apiKeys.length > 0) {
+  if (config.saucenao.apiKeys?.filter(Boolean).length > 0) {
     allSearchers.saucenao = new SauceNAO(ctx, config, config.saucenao);
   } else {
-    logger.info('[saucenao] 未提供任何 API Key，引擎已禁用。');
+    logger.info('[saucenao] 未提供任何有效的 API Key，引擎已禁用。');
   }
   allSearchers.tracemoe = new TraceMoe(ctx, config, config.tracemoe);
   allSearchers.iqdb = new IQDB(ctx, config, config.iqdb);
@@ -72,22 +74,35 @@ export function apply(ctx: Context, config: Config) {
 
   const allEnhancers: Record<string, Enhancer> = {};
   const enhancerRegistry = {
-    yandere: { constructor: YandeReEnhancer, needsKeys: false, keys: null, keyName: '', messageName: '图源' },
-    gelbooru: { constructor: GelbooruEnhancer, needsKeys: true, keys: config.gelbooru.keyPairs, keyName: 'API Key', messageName: '图源' },
-    danbooru: { constructor: DanbooruEnhancer, needsKeys: true, keys: config.danbooru.keyPairs, keyName: '用户凭据', messageName: '图源' },
-    pixiv: { constructor: PixivEnhancer, needsKeys: true, keys: [config.pixiv.refreshToken], keyName: 'Refresh Token', messageName: '图源' },
+    yandere: { constructor: YandeReEnhancer, needsKeys: false, keyName: '', messageName: '图源' },
+    gelbooru: { constructor: GelbooruEnhancer, needsKeys: true, keyName: 'API Key', messageName: '图源' },
+    danbooru: { constructor: DanbooruEnhancer, needsKeys: true, keyName: '用户凭据', messageName: '图源' },
+    pixiv: { constructor: PixivEnhancer, needsKeys: true, keyName: 'Refresh Token', messageName: '图源' },
   };
 
   for (const name in enhancerRegistry) {
       const entry = enhancerRegistry[name];
-      const areKeysProvided = !entry.needsKeys || (Array.isArray(entry.keys) ? entry.keys.filter(Boolean).length > 0 : !!entry.keys);
+      
+      let areKeysProvided = !entry.needsKeys;
+      if (entry.needsKeys) {
+        switch (name) {
+          case 'gelbooru':
+            areKeysProvided = config.gelbooru.keyPairs?.some(p => p.userId && p.apiKey);
+            break;
+          case 'danbooru':
+            areKeysProvided = config.danbooru.keyPairs?.some(p => p.username && p.apiKey);
+            break;
+          case 'pixiv':
+            areKeysProvided = !!config.pixiv.refreshToken;
+            break;
+        }
+      }
 
       if (areKeysProvided) {
           const constructorArgs: any[] = [ctx, config, config[name]];
-          // [FIX] DanbooruEnhancer 不再需要 puppeteerManager
           allEnhancers[name] = new entry.constructor(...constructorArgs);
       } else {
-          logger.info(`[${name}] ${entry.messageName}未配置任何${entry.keyName}，将无法启用。`);
+          logger.info(`[${name}] ${entry.messageName}未配置任何有效的${entry.keyName}，将无法启用。`);
       }
   }
 
@@ -275,7 +290,6 @@ export function apply(ctx: Context, config: Config) {
   // 注册生命周期钩子
   ctx.on('ready', async () => {
     if (config.puppeteer.persistentBrowser) {
-        // [FIX] 更新浏览器预加载逻辑，Danbooru不再需要Puppeteer
         const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
         const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
         if (needsPuppeteerForSearch) {
@@ -286,3 +300,4 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.on('dispose', () => puppeteerManager.dispose());
 }
+// --- END OF FILE src/index.ts ---
