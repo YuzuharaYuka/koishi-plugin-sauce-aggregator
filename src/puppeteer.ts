@@ -1,3 +1,5 @@
+// --- START OF FILE src/puppeteer.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
 import puppeteer from 'puppeteer-extra'
@@ -13,6 +15,7 @@ puppeteer.use(StealthPlugin())
 
 // 负责管理 Puppeteer 浏览器实例的生命周期、并发和页面创建
 export class PuppeteerManager {
+    private _browser: Browser | null = null;
     private _browserPromise: Promise<Browser> | null = null;
     private ctx: Context;
     private config: Config;
@@ -71,26 +74,19 @@ export class PuppeteerManager {
             '--lang=en-US,en',
         ];
 
-        // [FIX] 彻底移除对 ctx.http.config 的所有错误访问，只依赖插件自身的代理配置
         const proxyUrl = this.config.proxy;
         if (proxyUrl) {
             if (this.config.debug.enabled) logger.info(`[puppeteer] 将使用独立代理: ${proxyUrl}`);
             args.push(`--proxy-server=${proxyUrl}`);
         }
 
-        const browser = await puppeteer.launch({
+        return puppeteer.launch({
             headless: true,
             args: args,
             executablePath: executablePath,
             protocolTimeout: launchTimeout,
             timeout: launchTimeout,
         });
-
-        browser.on('disconnected', () => {
-            logger.warn('共享浏览器实例已断开连接。');
-            this._browserPromise = null;
-        });
-        return browser;
     }
 
     private getBrowser(): Promise<Browser> {
@@ -100,24 +96,36 @@ export class PuppeteerManager {
             if (this.config.debug.enabled) logger.info('浏览器被再次使用，已取消自动关闭。');
         }
 
-        if (this._browserPromise) {
-            return this._browserPromise.then(browser => {
-                if (browser.isConnected()) {
-                    return browser;
-                }
-                if (this.config.debug.enabled) logger.info('共享浏览器实例已断开，正在启动新的实例...');
-                this._browserPromise = this.launchBrowser().catch(err => {
-                    this._browserPromise = null; 
-                    throw err;
-                });
-                return this._browserPromise;
-            });
+        if (this._browser && this._browser.isConnected()) {
+            return Promise.resolve(this._browser);
         }
-        if (this.config.debug.enabled) logger.info('共享浏览器实例不存在，正在启动...');
-        this._browserPromise = this.launchBrowser().catch(err => {
-            this._browserPromise = null; 
-            throw err;
-        });
+
+        if (this._browserPromise) {
+            return this._browserPromise;
+        }
+
+        if (this.config.debug.enabled) logger.info('共享浏览器实例不存在或已断开，正在启动...');
+        
+        this._browserPromise = (async () => {
+            try {
+                const browser = await this.launchBrowser();
+                this._browser = browser; // 存储已成功启动的实例
+                browser.on('disconnected', () => {
+                    logger.warn('共享浏览器实例已断开连接。');
+                    if (this._browser === browser) {
+                        this._browser = null;
+                        this._browserPromise = null;
+                    }
+                });
+                return browser;
+            } catch (error) {
+                // 如果启动失败，重置状态以便下次重试
+                this._browser = null;
+                this._browserPromise = null; 
+                throw error;
+            }
+        })();
+        
         return this._browserPromise;
     }
     
@@ -133,14 +141,14 @@ export class PuppeteerManager {
         const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
         if (timeout <= 0) {
              if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
-             this.dispose();
+             await this.dispose();
              return;
         }
 
         if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后自动关闭浏览器。`);
-        this._closeTimer = setTimeout(() => {
+        this._closeTimer = setTimeout(async () => {
             if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
-            this.dispose();
+            await this.dispose();
             this._closeTimer = null;
         }, timeout);
     }
@@ -228,17 +236,23 @@ export class PuppeteerManager {
             this._closeTimer = null;
         }
 
-        if (this._browserPromise) {
+        const browserPromise = this._browserPromise;
+        // 立即重置状态，防止新的请求进入
+        this._browser = null;
+        this._browserPromise = null;
+
+        if (browserPromise) {
+            if (this.config.debug.enabled) logger.info('正在等待浏览器任务完成并关闭...');
             try {
-                const browser = await this._browserPromise;
+                const browser = await browserPromise;
                 if (browser?.isConnected()) {
-                    if (this.config.debug.enabled) logger.info('正在关闭共享浏览器实例...');
                     await browser.close();
+                    if (this.config.debug.enabled) logger.info('浏览器实例已成功关闭。');
                 }
             } catch (error) {
-                logger.warn('关闭浏览器实例时发生错误:', error);
+                logger.warn('关闭浏览器实例时发生错误 (可能是在启动过程中):', error.message);
             }
-            this._browserPromise = null;
         }
     }
 }
+// --- END OF FILE src/puppeteer.ts ---
