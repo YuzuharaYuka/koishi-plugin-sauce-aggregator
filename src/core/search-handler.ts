@@ -191,8 +191,12 @@ export class SearchHandler {
                 else low.push(result);
             });
 
-            if (high.length > 0) highConfidenceGroups.push({ engine: output.engine, results: high });
-            if (low.length > 0) lowConfidenceGroups.push({ engine: output.engine, results: low.slice(0, this.config.maxResults) });
+            // [FIX] 修正逻辑：如果一个引擎找到了高匹配度结果，则不再将该引擎的低匹配度结果添加到 lowConfidenceGroups。
+            if (high.length > 0) {
+                highConfidenceGroups.push({ engine: output.engine, results: high });
+            } else if (low.length > 0) {
+                lowConfidenceGroups.push({ engine: output.engine, results: low.slice(0, this.config.maxResults) });
+            }
         }
         
         const figureMessage = h('figure');
