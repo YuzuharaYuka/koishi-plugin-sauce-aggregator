@@ -54,11 +54,14 @@ export class SearchHandler {
     public async enhanceResult(
         result: SearcherResult.Result,
         sortedEnhancers: Enhancer[],
-        processedIds?: Set<string>
+        processedIds?: Set<string>,
+        successfulEnhancers?: Set<string>
     ): Promise<{ enhancedResult: EnhancedResult | null; enhancementId: string | null }> {
         const textToSearch = [result.url, ...(result.details || [])].join(' ');
 
         for (const enhancer of sortedEnhancers) {
+            if (successfulEnhancers?.has(enhancer.name)) continue;
+
             const urlPattern = this.enhancerUrlPatterns[enhancer.name];
             if (!urlPattern || !urlPattern.test(textToSearch)) {
                 continue;
@@ -84,6 +87,7 @@ export class SearchHandler {
         
               if (enhancedData) {
                 if (this.config.debug.enabled) logger.info(`[${enhancer.name}] 已成功获取图源信息。`);
+                successfulEnhancers?.add(enhancer.name);
                 return { enhancedResult: enhancedData, enhancementId };
               }
             } catch (e) {
@@ -193,6 +197,7 @@ export class SearchHandler {
         
         const figureMessage = h('figure');
         const processedEnhancements = new Set<string>();
+        const successfulEnhancers = new Set<string>();
         let mainResultsFound = false;
 
         if (highConfidenceGroups.length > 0) {
@@ -205,7 +210,7 @@ export class SearchHandler {
                 }
 
                 for (const result of resultsToShow) {
-                    const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
+                    const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements, successfulEnhancers);
                     if (enhancementId) processedEnhancements.add(enhancementId);
                     await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, group.engine, botUser, enhancedResult);
                 }
@@ -291,8 +296,9 @@ export class SearchHandler {
   
             const figureMessage = h('figure');
             const processedEnhancements = new Set<string>();
+            const successfulEnhancers = new Set<string>();
             for (const result of resultsToShow) {
-                const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
+                const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements, successfulEnhancers);
                 if (enhancementId) processedEnhancements.add(enhancementId);
                 await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, highConfidenceSearcherName, botUser, enhancedResult);
             }
@@ -357,6 +363,7 @@ export class SearchHandler {
         let highConfidenceSent = false;
         const lowConfidenceOutputs: SearchOutput[] = [];
         const processedEnhancements = new Set<string>();
+        const successfulEnhancers = new Set<string>();
         const completedMainEngines = new Set<SearchEngineName>();
         
         let tempFile: { filePath: string; cleanup: () => Promise<void> } | null = null;
@@ -404,7 +411,7 @@ export class SearchHandler {
                     highConfidenceSent = true;
                     abortController.abort();
                     await session.send(`[${output.engine}] 找到高匹配度结果:`);
-                    const { enhancedResult, enhancementId } = await this.enhanceResult(highConfidenceResults[0], sortedEnhancers, processedEnhancements);
+                    const { enhancedResult, enhancementId } = await this.enhanceResult(highConfidenceResults[0], sortedEnhancers, processedEnhancements, successfulEnhancers);
                     if (enhancementId) processedEnhancements.add(enhancementId);
                     const figureMessage = h('figure');
                     await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, highConfidenceResults[0], output.engine, botUser, enhancedResult);
@@ -421,7 +428,7 @@ export class SearchHandler {
                     }
 
                     for (const result of resultsToShow) {
-                        const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements);
+                        const { enhancedResult, enhancementId } = await this.enhanceResult(result, sortedEnhancers, processedEnhancements, successfulEnhancers);
                         if (enhancementId) processedEnhancements.add(enhancementId);
                         await MessageBuilder.buildHighConfidenceMessage(figureMessage, this.ctx, this.config, result, output.engine, botUser, enhancedResult);
                     }
