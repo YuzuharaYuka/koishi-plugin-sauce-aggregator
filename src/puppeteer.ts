@@ -1,5 +1,3 @@
-// --- START OF FILE src/puppeteer.ts ---
-
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
 import puppeteer from 'puppeteer-extra'
@@ -57,8 +55,9 @@ export class PuppeteerManager {
             return null;
         }
     }
-
-    private async launchBrowser(): Promise<Browser> {
+    
+    // [FIX] 将原始启动逻辑封装，以便添加超时
+    private async _launchBrowserInternal(): Promise<Browser> {
         const executablePath = await this.getBrowserPath();
         if (!executablePath) {
             throw new Error('未能找到任何兼容的浏览器。请在插件的浏览器设置中手动指定路径。');
@@ -84,9 +83,21 @@ export class PuppeteerManager {
             headless: true,
             args: args,
             executablePath: executablePath,
-            protocolTimeout: launchTimeout,
-            timeout: launchTimeout,
+            protocolTimeout: launchTimeout, // puppeteer 内部的协议超时
+            timeout: launchTimeout, // puppeteer 内部的启动超时
         });
+    }
+
+    // [FIX] 使用 Promise.race 为浏览器启动添加一个硬性超时
+    private launchBrowser(): Promise<Browser> {
+        const launchTimeout = this.config.puppeteer.browserLaunchTimeout * 1000;
+        
+        return Promise.race([
+            this._launchBrowserInternal(),
+            new Promise<Browser>((_, reject) => 
+                setTimeout(() => reject(new Error(`浏览器启动在 ${this.config.puppeteer.browserLaunchTimeout} 秒内未能完成，操作已超时。`)), launchTimeout)
+            )
+        ]);
     }
 
     private getBrowser(): Promise<Browser> {
@@ -108,6 +119,7 @@ export class PuppeteerManager {
         
         this._browserPromise = (async () => {
             try {
+                // [FIX] 现在 launchBrowser() 拥有了可靠的超时机制
                 const browser = await this.launchBrowser();
                 this._browser = browser; // 存储已成功启动的实例
                 browser.on('disconnected', () => {
@@ -119,10 +131,11 @@ export class PuppeteerManager {
                 });
                 return browser;
             } catch (error) {
-                // 如果启动失败，重置状态以便下次重试
+                // [FIX] 无论启动失败还是超时，都会进入这里，保证状态被重置
+                logger.error('启动浏览器实例时发生严重错误:', error.message);
                 this._browser = null;
                 this._browserPromise = null; 
-                throw error;
+                throw error; // 将错误向上抛出，让调用方知道失败了
             }
         })();
         
@@ -255,4 +268,3 @@ export class PuppeteerManager {
         }
     }
 }
-// --- END OF FILE src/puppeteer.ts ---
