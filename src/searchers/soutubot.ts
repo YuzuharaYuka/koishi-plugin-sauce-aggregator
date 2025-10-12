@@ -25,6 +25,17 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     const tempFilePath = options.tempFilePath;
     const page = await this.puppeteer.getPage();
     try {
+        // [FIX] 启用请求拦截
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const resourceType = req.resourceType();
+            if (['font', 'media'].includes(resourceType)) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+        
         const url = `https://soutubot.moe/`
         if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 导航到: ${url}`);
         await page.goto(url, { waitUntil: 'networkidle0' });
@@ -54,7 +65,6 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
         const parsedResults = await this.parseResults(page, maxNeeded);
         const finalResults = this.formatResults(parsedResults);
 
-        // [FIX] 新增请求成功日志
         if (this.mainConfig.debug.enabled) {
             const duration = Date.now() - startTime;
             logger.info(`[soutubot] 搜索与解析完成 (${duration}ms)，解析到 ${finalResults.length} 个结果。`);

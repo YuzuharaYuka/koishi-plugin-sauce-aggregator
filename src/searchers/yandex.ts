@@ -25,55 +25,38 @@ export class Yandex extends Searcher<YandexConfig.Config> {
     const tempFilePath = options.tempFilePath;
     const page = await this.puppeteer.getPage();
     try {
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const resourceType = req.resourceType();
+            if (['image', 'font', 'media'].includes(resourceType)) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',
+        });
+        
         const url = `https://${this.subConfig.domain}/images/`
         if (this.mainConfig.debug.enabled) logger.info(`[yandex] 导航到: ${url}`);
         await page.goto(url, { waitUntil: 'domcontentloaded' });
-        
-        try {
-            if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检查 Cookie 弹窗...`);
-            const cookiePopupSelector = '.gdpr-popup-v3-main';
-            await page.waitForSelector(cookiePopupSelector, { visible: true, timeout: 5000 });
-            if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检测到 Cookie 弹窗，点击接受...`);
-            await page.click('#gdpr-popup-v3-button-all');
-            await page.waitForSelector(cookiePopupSelector, { hidden: true, timeout: 3000 });
-        } catch (e) {
-            if (this.mainConfig.debug.enabled) logger.info(`[yandex] 未检测到 Cookie 弹窗，继续执行。`);
-        }
 
-        const cameraButtonSelector = '.HeaderDesktopActions-CbirButton';
-        const uploadPanelSelector = '.CbirPanel-Popup';
-        let uploadPanelVisible = false;
-        for (let i = 0; i < 3; i++) {
-            try {
-                if (this.mainConfig.debug.enabled) logger.info(`[yandex] 等待并点击相机图标 (尝试 ${i + 1}/3)...`);
-                await page.waitForSelector(cameraButtonSelector, { visible: true, timeout: 10000 });
-                await page.click(cameraButtonSelector);
-                await page.waitForSelector(uploadPanelSelector, { visible: true, timeout: 5000 });
-                uploadPanelVisible = true;
-                break;
-            } catch (e) {
-                if (this.mainConfig.debug.enabled) logger.warn(`[yandex] 第 ${i + 1} 次点击未能打开上传面板: ${e.message}`);
-                if (i < 2) await page.reload({ waitUntil: 'domcontentloaded' });
-            }
-        }
-        if (!uploadPanelVisible) throw new Error(`点击相机图标 3 次后，仍未能打开上传面板。`);
-        
-        const fileChooserPromise = page.waitForFileChooser();
-        const selectFileButtonSelector = '.CbirPanel-FileControlsButton';
-        await page.waitForSelector(selectFileButtonSelector);
-        await page.click(selectFileButtonSelector);
-        
-        const fileChooser = await fileChooserPromise;
-        await fileChooser.accept([tempFilePath]);
-        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 文件已提交。`);
+        await this.handleCookiePopups(page);
 
-        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 等待结果元素出现...`);
-        await page.waitForSelector('.CbirSites-Item', { timeout: this.mainConfig.requestTimeout * 1000 });
+        const uploaded = await this.tryUploadImage(page, tempFilePath);
+        if (!uploaded) {
+            throw new Error('在所有已知的 UI 布局中都未能成功上传图片。');
+        }
+        
+        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 文件已提交，等待结果页面加载...`);
+
+        await page.waitForSelector('.CbirSites-Item, .CbirSimilar-Thumb', { timeout: this.mainConfig.requestTimeout * 1000 });
         if (this.mainConfig.debug.enabled) logger.info(`[yandex] 结果已加载，正在解析...`);
 
         const results = await this._parseResults(page, options.maxResults);
         
-        // [FIX] 新增请求成功日志
         if (this.mainConfig.debug.enabled) {
             const duration = Date.now() - startTime;
             logger.info(`[yandex] 搜索与解析完成 (${duration}ms)，解析到 ${results.length} 个结果。`);
@@ -95,22 +78,92 @@ export class Yandex extends Searcher<YandexConfig.Config> {
         if (page && !page.isClosed()) await page.close();
     }
   }
+  
+  // [FIX] 使用 Promise.allSettled 并行处理弹窗检测
+  private async handleCookiePopups(page: Page): Promise<void> {
+      const cookiePopups = [
+          { selector: '#gdpr-popup-v3-button-all', name: 'GDPR v3' },
+          { selector: 'button[data-testid="button-allow-all"]', name: 'Yandex uses cookies' },
+      ];
+      
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] 并行检查 ${cookiePopups.length} 种 Cookie 弹窗...`);
+
+      const detectionPromises = cookiePopups.map(popup => (async () => {
+          try {
+              // 短暂等待以确保弹窗有机会渲染
+              await page.waitForSelector(popup.selector, { visible: true, timeout: 3000 });
+              if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检测到 '${popup.name}' 弹窗，点击接受...`);
+              await page.click(popup.selector);
+              // 等待关闭动画完成
+              await page.waitForSelector(popup.selector, { hidden: true, timeout: 2000 });
+          } catch (e) {
+              // 未找到选择器是正常情况，静默处理
+          }
+      })());
+
+      await Promise.allSettled(detectionPromises);
+      if (this.mainConfig.debug.enabled) logger.info(`[yandex] Cookie 弹窗检查完成。`);
+  }
+  
+  private async tryUploadImage(page: Page, filePath: string): Promise<boolean> {
+    const newUiButtonSelector = '.Image-Uploader, button.Button2_view_action';
+    const oldUiButtonSelector = '.HeaderDesktopActions-CbirButton';
+
+    if (this.mainConfig.debug.enabled) logger.info('[yandex] 并行检测 UI 布局...');
+    
+    try {
+        const raceResult = await Promise.race([
+            page.waitForSelector(newUiButtonSelector, { visible: true, timeout: 5000 }).then(() => 'new'),
+            page.waitForSelector(oldUiButtonSelector, { visible: true, timeout: 5000 }).then(() => 'old'),
+        ]);
+
+        if (raceResult === 'new') {
+            if (this.mainConfig.debug.enabled) logger.info('[yandex] 检测到新版 UI，执行策略 1...');
+            const [fileChooser] = await Promise.all([
+                page.waitForFileChooser({ timeout: 10000 }),
+                page.click(newUiButtonSelector),
+            ]);
+            await fileChooser.accept([filePath]);
+            if (this.mainConfig.debug.enabled) logger.info('[yandex] 策略 1 成功。');
+            return true;
+        } else if (raceResult === 'old') {
+            if (this.mainConfig.debug.enabled) logger.info('[yandex] 检测到旧版 UI，执行策略 2...');
+            await page.click(oldUiButtonSelector);
+            await page.waitForSelector('.CbirPanel-Popup', { visible: true, timeout: 5000 });
+            const [fileChooser] = await Promise.all([
+                page.waitForFileChooser({ timeout: 10000 }),
+                page.click('.CbirPanel-FileControlsButton')
+            ]);
+            await fileChooser.accept([filePath]);
+            if (this.mainConfig.debug.enabled) logger.info('[yandex] 策略 2 成功。');
+            return true;
+        }
+    } catch (e) {
+        if (this.mainConfig.debug.enabled) logger.warn('[yandex] UI 检测或上传流程失败:', e.message);
+        return false;
+    }
+    return false;
+  }
+
 
   private async _parseResults(page: Page, maxResults: number): Promise<Searcher.Result[]> {
+    const resultsSelector = '.CbirSites-Item, .CbirSimilar-Item'; 
+    await page.waitForSelector(resultsSelector, { timeout: 5000 });
+    
     return page.$$eval(
-      '.CbirSites-Item',
+      resultsSelector,
       (items, max) => {
         const parsedResults = [];
         for (const item of items.slice(0, max)) {
-          const thumbElement = item.querySelector('.CbirSites-ItemThumb img') as HTMLImageElement;
-          const titleElement = item.querySelector('.CbirSites-ItemTitle a') as HTMLAnchorElement;
-          const domainElement = item.querySelector('.CbirSites-ItemDomain') as HTMLAnchorElement;
+          const thumbElement = item.querySelector('img') as HTMLImageElement;
+          const titleElement = item.querySelector('.CbirSites-ItemTitle a, .CbirSimilar-Title') as HTMLAnchorElement;
+          const domainElement = item.querySelector('.CbirSites-ItemDomain, .CbirSimilar-Domain') as HTMLAnchorElement;
           const sizeElement = item.querySelector('.Thumb-Mark');
 
           if (!thumbElement || !titleElement) continue;
           
           let thumbnailUrl = thumbElement.src;
-          if (thumbnailUrl.startsWith('//')) {
+          if (thumbnailUrl && thumbnailUrl.startsWith('//')) {
               thumbnailUrl = 'https:' + thumbnailUrl;
           }
 

@@ -16,7 +16,6 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
     this.puppeteer = puppeteerManager;
   }
 
-  // 执行搜索
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     if (!options.imageUrl || !options.imageUrl.startsWith('http')) {
         logger.warn('[ascii2d] 此引擎需要一个有效的 HTTP/HTTPS 图片 URL 才能进行搜索。已跳过。');
@@ -27,7 +26,17 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
     const page = await this.puppeteer.getPage();
 
     try {
-      // 导航与图片提交
+      // [FIX] 启用请求拦截
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+          const resourceType = req.resourceType();
+          if (['font', 'media'].includes(resourceType)) { // Ascii2d 需要加载图片
+              req.abort();
+          } else {
+              req.continue();
+          }
+      });
+
       if (this.mainConfig.debug.enabled) logger.info(`[ascii2d] 导航到 ascii2d.net`);
       await page.goto('https://ascii2d.net/');
 
@@ -50,13 +59,11 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
           page.click(searchButtonSelector),
       ]);
       
-      // 等待并解析结果
       await page.waitForSelector('div.item-box');
       if (this.mainConfig.debug.enabled) logger.info(`[ascii2d] 已加载颜色搜索结果页: ${page.url()}`);
       
       const results = await this.parseResults(page);
 
-      // [FIX] 新增请求成功日志
       if (this.mainConfig.debug.enabled) {
           const duration = Date.now() - startTime;
           logger.info(`[ascii2d] 搜索与解析完成 (${duration}ms)，解析到 ${results.length} 个结果。`);
@@ -75,10 +82,8 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
     }
   }
 
-  // 解析结果页面
   private async parseResults(page: Page): Promise<Searcher.Result[]> {
     const rawResults = await page.$$eval('div.item-box', (boxes: HTMLDivElement[]) => {
-        // 从第二个 item-box 开始，第一个是原图
         return boxes.slice(1).map(box => {
             if (box.querySelector('h5')?.textContent === '広告') return null;
 
