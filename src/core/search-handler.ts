@@ -160,6 +160,7 @@ export class SearchHandler {
       mainSearchers: Searcher[],
       attachSearchers: Searcher[],
       isSingleEngineSearch: boolean,
+      isAllSearch: boolean, // [FIX] 新增参数
       options: SearchOptions,
       botUser: any,
       session: any,
@@ -191,7 +192,6 @@ export class SearchHandler {
                 else low.push(result);
             });
 
-            // [FIX] 修正逻辑：如果一个引擎找到了高匹配度结果，则不再将该引擎的低匹配度结果添加到 lowConfidenceGroups。
             if (high.length > 0) {
                 highConfidenceGroups.push({ engine: output.engine, results: high });
             } else if (low.length > 0) {
@@ -208,7 +208,7 @@ export class SearchHandler {
             mainResultsFound = true;
             await session.send('搜索完成，找到高匹配度结果:');
             for (const group of highConfidenceGroups) {
-                let resultsToShow = (isSingleEngineSearch || this.config.search.parallelHighConfidenceStrategy === 'all') ? group.results : [group.results[0]];
+                let resultsToShow = (isSingleEngineSearch || this.config.search.parallelHighConfidenceStrategy === 'all' || isAllSearch) ? group.results : [group.results[0]];
                 if (group.engine === 'soutubot') {
                     resultsToShow = resultsToShow.slice(0, this.config.soutubot.maxHighConfidenceResults);
                 }
@@ -221,9 +221,12 @@ export class SearchHandler {
             }
         }
         
-        if (lowConfidenceGroups.length > 0 && (!mainResultsFound || isSingleEngineSearch)) {
+        // [FIX] 修改此处的条件判断，并优化提示文案
+        if (lowConfidenceGroups.length > 0 && (!mainResultsFound || isSingleEngineSearch || isAllSearch)) {
              if (!mainResultsFound) {
                 await session.send('未找到高匹配度结果，显示如下:');
+             } else if (isAllSearch) {
+                await session.send('低匹配度结果如下:');
              }
              mainResultsFound = true;
              const lowConfidencePromises = lowConfidenceGroups.flatMap(group =>

@@ -222,7 +222,8 @@ export function apply(ctx: Context, config: Config) {
                   ((config.yandex.alwaysAttach && s.name === 'yandex') || (config.ascii2d.alwaysAttach && s.name === 'ascii2d'))
                   && mainSearchers[0]?.name !== s.name
               );
-              return searchHandler.handleDirectSearch(mainSearchers, attachSearchers, isSingleEngineSpecified, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
+              // [FIX] 传入 `options.all` 的布尔值
+              return searchHandler.handleDirectSearch(mainSearchers, attachSearchers, isSingleEngineSpecified, !!options.all, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
           } else if (config.search.mode === 'parallel') {
               return searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
           } else {
