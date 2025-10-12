@@ -1,3 +1,5 @@
+// --- START OF FILE src/searchers/yandex.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, Yandex as YandexConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
@@ -15,11 +17,11 @@ export class Yandex extends Searcher<YandexConfig.Config> {
   }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
-    // [FIX] 不再调用 withTempFile，直接使用传入的路径
     if (!options.tempFilePath) {
         logger.warn('[yandex] 此引擎需要一个临时文件路径才能进行搜索。已跳过。');
         return [];
     }
+    const startTime = Date.now();
     const tempFilePath = options.tempFilePath;
     const page = await this.puppeteer.getPage();
     try {
@@ -71,11 +73,16 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
         const results = await this._parseResults(page, options.maxResults);
         
+        // [FIX] 新增请求成功日志
+        if (this.mainConfig.debug.enabled) {
+            const duration = Date.now() - startTime;
+            logger.info(`[yandex] 搜索与解析完成 (${duration}ms)，解析到 ${results.length} 个结果。`);
+        }
+        
         if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
             logger.info(`[yandex] Parsed JSON Response: ${JSON.stringify(results, null, 2)}`);
         }
         
-        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 成功解析到 ${results.length} 个结果。`);
         return results;
 
     } catch (error) {
@@ -129,3 +136,4 @@ export class Yandex extends Searcher<YandexConfig.Config> {
     );
   }
 }
+// --- END OF FILE src/searchers/yandex.ts ---

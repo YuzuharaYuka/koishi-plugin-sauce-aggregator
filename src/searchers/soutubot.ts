@@ -1,3 +1,5 @@
+// --- START OF FILE src/searchers/soutubot.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, SoutuBot as SoutuBotConfig, SearchEngineName } from '../config'
 import type { PuppeteerManager } from '../puppeteer'
@@ -15,11 +17,11 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
   }
 
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
-    // [FIX] 不再调用 withTempFile，直接使用传入的路径
     if (!options.tempFilePath) {
         logger.warn('[soutubot] 此引擎需要一个临时文件路径才能进行搜索。已跳过。');
         return [];
     }
+    const startTime = Date.now();
     const tempFilePath = options.tempFilePath;
     const page = await this.puppeteer.getPage();
     try {
@@ -50,12 +52,19 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
 
         const maxNeeded = Math.max(options.maxResults, this.subConfig.maxHighConfidenceResults || 1);
         const parsedResults = await this.parseResults(page, maxNeeded);
+        const finalResults = this.formatResults(parsedResults);
 
+        // [FIX] 新增请求成功日志
+        if (this.mainConfig.debug.enabled) {
+            const duration = Date.now() - startTime;
+            logger.info(`[soutubot] 搜索与解析完成 (${duration}ms)，解析到 ${finalResults.length} 个结果。`);
+        }
+        
         if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
             logger.info(`[soutubot] Parsed JSON Response: ${JSON.stringify(parsedResults, null, 2)}`);
         }
         
-        return this.formatResults(parsedResults);
+        return finalResults;
 
     } catch (error) {
         if (error.message.includes('Cloudflare')) throw error;
@@ -130,3 +139,4 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     });
   }
 }
+// --- END OF FILE src/searchers/soutubot.ts ---

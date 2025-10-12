@@ -7,7 +7,6 @@ const logger = new Logger('sauce-aggregator')
 export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
   public readonly name: SearchEngineName = 'tracemoe';
   
-  // [FIX] 遵循正确的构造函数模式
   constructor(ctx: Context, mainConfig: Config, subConfig: TraceMoeConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
@@ -21,7 +20,14 @@ export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
     if (this.mainConfig.debug.enabled) logger.info(`[tracemoe] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
     
     try {
+      const startTime = Date.now();
       const data = await this.ctx.http.post(url, form, { timeout: this.mainConfig.requestTimeout * 1000 })
+      
+      // [FIX] 新增请求成功日志
+      if (this.mainConfig.debug.enabled) {
+          const duration = Date.now() - startTime;
+          logger.info(`[tracemoe] 收到响应 (${duration}ms)，解析到 ${data.result?.length ?? 0} 个结果。`);
+      }
       
       if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info(`[tracemoe] 收到响应: ${JSON.stringify(data, null, 2)}`)
@@ -100,3 +106,4 @@ export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
     return `${h}:${m}:${s}`;
   }
 }
+// --- END OF FILE src/searchers/tracemoe.ts ---

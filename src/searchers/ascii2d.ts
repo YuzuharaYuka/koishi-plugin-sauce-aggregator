@@ -11,7 +11,6 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
   public readonly name: SearchEngineName = 'ascii2d';
   private puppeteer: PuppeteerManager;
   
-  // [FIX] 遵循正确的构造函数模式
   constructor(ctx: Context, mainConfig: Config, subConfig: Ascii2DConfig.Config, puppeteerManager: PuppeteerManager) {
     super(ctx, mainConfig, subConfig);
     this.puppeteer = puppeteerManager;
@@ -24,6 +23,7 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
         return [];
     }
 
+    const startTime = Date.now();
     const page = await this.puppeteer.getPage();
 
     try {
@@ -55,6 +55,13 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
       if (this.mainConfig.debug.enabled) logger.info(`[ascii2d] 已加载颜色搜索结果页: ${page.url()}`);
       
       const results = await this.parseResults(page);
+
+      // [FIX] 新增请求成功日志
+      if (this.mainConfig.debug.enabled) {
+          const duration = Date.now() - startTime;
+          logger.info(`[ascii2d] 搜索与解析完成 (${duration}ms)，解析到 ${results.length} 个结果。`);
+      }
+
       return results.slice(0, options.maxResults);
 
     } catch(error) {
@@ -108,3 +115,4 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
     }));
   }
 }
+// --- END OF FILE src/searchers/ascii2d.ts ---

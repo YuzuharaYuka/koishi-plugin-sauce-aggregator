@@ -31,7 +31,6 @@ function parseImageProperties(alt: string) {
 export class IQDB extends Searcher<IQDBConfig.Config> {
   public readonly name: SearchEngineName = 'iqdb';
   
-  // [FIX] 遵循正确的构造函数模式
   constructor(ctx: Context, mainConfig: Config, subConfig: IQDBConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
@@ -45,6 +44,7 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
     if (this.mainConfig.debug.enabled) logger.info(`[iqdb] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
 
     try {
+      const startTime = Date.now();
       const html = await this.ctx.http.post(url, form, {
         headers: { 
             'User-Agent': USER_AGENT,
@@ -53,7 +53,14 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
         timeout: this.mainConfig.requestTimeout * 1000,
       })
 
-      if (this.mainConfig.debug.enabled) logger.info(`[iqdb] 收到响应页面，长度: ${html.length}`)
+      const results = this._parseResults(html);
+
+      // [FIX] 新增请求成功日志
+      if (this.mainConfig.debug.enabled) {
+          const duration = Date.now() - startTime;
+          logger.info(`[iqdb] 收到响应并解析完成 (${duration}ms)，解析到 ${results.length} 个结果。`);
+      }
+      
       if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info({ '[iqdb] Raw HTML Response': html });
       }
@@ -62,7 +69,7 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
       if (html.includes('You are searching too much.')) throw new Error('搜索过于频繁，请稍后再试。');
       if (html.includes("Can't read query result")) throw new Error('服务器未能读取查询结果，可能是临时性问题，请稍后重试。');
 
-      return this._parseResults(html);
+      return results;
 
     } catch (error) {
       if (error.code === 'ETIMEDOUT' || /timeout/i.test(error.message)) {
@@ -136,3 +143,4 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
     return results.filter(r => r.thumbnail && r.url);
   }
 }
+// --- END OF FILE src/searchers/iqdb.ts ---

@@ -12,7 +12,6 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
   public readonly name: SearchEngineName = 'saucenao';
   private keyIndex = 0
   
-  // [FIX] 遵循正确的构造函数模式
   constructor(ctx: Context, mainConfig: Config, subConfig: SauceNAOConfig.Config) {
     super(ctx, mainConfig, subConfig);
   }
@@ -32,6 +31,7 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
         keysTried++;
         
         try {
+            const startTime = Date.now();
             if (this.mainConfig.debug.enabled) {
                 logger.info(`[saucenao] 正在尝试使用第 ${currentKeyIndex + 1} 个 Key。`);
             }
@@ -48,6 +48,12 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
             const data = await this.ctx.http.post(url, form, { timeout: this.mainConfig.requestTimeout * 1000 });
 
             this.keyIndex = (this.keyIndex + keysTried) % apiKeys.length;
+
+            // [FIX] 新增请求成功日志
+            if (this.mainConfig.debug.enabled) {
+                const duration = Date.now() - startTime;
+                logger.info(`[saucenao] 收到响应 (${duration}ms)，解析到 ${data.results?.length ?? 0} 个结果。`);
+            }
             
             if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
                 logger.info(`[saucenao] 收到响应: ${JSON.stringify(data, null, 2)}`);
@@ -140,3 +146,4 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
       });
   }
 }
+// --- END OF FILE src/searchers/saucenao.ts ---
