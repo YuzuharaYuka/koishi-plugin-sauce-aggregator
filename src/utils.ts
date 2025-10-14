@@ -1,5 +1,3 @@
-// --- START OF FILE src/utils.ts ---
-
 import { Buffer } from 'buffer';
 import { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, encodePNGToStream, make } from 'pureimage';
 import { Readable, PassThrough } from 'stream';
@@ -11,7 +9,7 @@ const logger = new Logger('sauce-aggregator:utils');
 interface ImageSource {
   elements?: h[];
   quote?: { elements?: h[] };
-  app?: Context['app'];
+  root?: Context;
 }
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
@@ -174,9 +172,8 @@ export function getImageUrlAndName(session: ImageSource, text: string): { url: s
     const rawName = (imgElement?.attrs.file || url.split('/').pop().split('?')[0]) || 'image.jpg';
     const name = rawName.replace(/[\r\n"']+/g, '');
 
-    if (session.app?.config.debug) {
+    if (session.root?.config.debug) {
       logger.info(`[Debug] 解析到图片 URL: ${url}`);
     }
     return { url, name };
 }
-// --- END OF FILE src/utils.ts ---
