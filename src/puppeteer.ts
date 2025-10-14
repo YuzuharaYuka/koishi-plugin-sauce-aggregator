@@ -60,8 +60,8 @@ export class PuppeteerManager {
         }
     }
     
-    private _launchBrowserInternal(): Promise<Browser> {
-        const executablePath = this.getBrowserPath();
+    private async _launchBrowserInternal(): Promise<Browser> {
+        const executablePath = await this.getBrowserPath();
         if (!executablePath) {
             throw new Error('未能找到任何兼容的浏览器。请在插件的浏览器设置中手动指定路径。');
         }
@@ -101,14 +101,14 @@ export class PuppeteerManager {
         return Promise.race([this._launchBrowserInternal(), timeoutPromise]);
     }
     
-    // [REFACTOR] 核心改造：确保浏览器实例可用，如果不可用则销毁并重建
     private ensureBrowserIsReady(): Promise<Browser> {
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
         }
 
-        if (this._browser && this._browser.isConnected()) {
+        // [FIX] 使用 .connected 替代已废弃的 .isConnected()
+        if (this._browser && this._browser.connected) {
             return Promise.resolve(this._browser);
         }
 
@@ -119,7 +119,6 @@ export class PuppeteerManager {
         logger.info('浏览器实例不存在或已断开，正在启动或重建...');
         
         this._browserPromise = (async () => {
-            // 在启动前，先确保旧实例被彻底清理
             if (this._browser) {
                 await this.dispose().catch(err => logger.warn('在重建浏览器前，清理旧实例时出错:', err.message));
             }
@@ -132,19 +131,16 @@ export class PuppeteerManager {
 
                 browser.on('disconnected', () => {
                     logger.warn('浏览器实例连接已断开。');
-                    // 仅当事件源是当前管理的实例时才清理，避免竞态条件
                     if (this._browser === browser) {
                         this._browser = null;
                         this._browserPromise = null;
                         this._wsEndpoint = null;
                     }
                 });
-                // 启动成功后，将 promise 结果暴露出去，但后续不再依赖此 promise
                 this._browserPromise = null;
                 return browser;
             } catch (error) {
                 logger.error('启动浏览器实例时发生严重错误:', error.message);
-                // 确保在失败时清理所有状态，以便下次重试
                 this._browser = null;
                 this._browserPromise = null; 
                 this._wsEndpoint = null;
@@ -157,13 +153,10 @@ export class PuppeteerManager {
     
     private async scheduleClose() {
         if (this.config.puppeteer.persistentBrowser || this._closeTimer) return;
-
-        // [FIX] 确保在调度关闭前，浏览器实例是存在的
         if (!this._browser) return;
 
         try {
             const pages = await this._browser.pages();
-             // 预留一个 about:blank 页面是正常的
             if (pages.length > 1) {
                 if (this.config.debug.enabled) logger.info(`仍有 ${pages.length - 1} 个活动页面，暂不关闭。`);
                 return;
@@ -184,7 +177,6 @@ export class PuppeteerManager {
             }, timeout);
         } catch (error) {
             logger.warn('调度关闭浏览器时检查页面失败:', error.message);
-            // 如果检查页面都失败了，说明浏览器已经出问题，直接销毁
             await this.dispose();
         }
     }
@@ -205,13 +197,18 @@ export class PuppeteerManager {
             return page;
         } catch (error) {
             logger.error('获取新页面时发生严重错误:', formatNetworkError(error));
-            // 无论何种错误，都向上抛出，让当前搜索任务失败
             throw error;
         }
     }
 
     public async createTempFile(buffer: Buffer, fileName: string): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
-        const tempFilePath = path.resolve(this.ctx.baseDir, 'data', 'temp', 'sauce-aggregator', `sauce-aggregator-${Date.now()}-${fileName}`);
+        const customPath = this.config.puppeteer.tempPath;
+        const baseDir = customPath 
+            ? path.resolve(customPath)
+            : path.resolve(this.ctx.baseDir, 'data', 'temp', 'sauce-aggregator');
+
+        const tempFilePath = path.join(baseDir, `sauce-aggregator-${Date.now()}-${fileName}`);
+        
         await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
         await fs.writeFile(tempFilePath, buffer);
         if (this.config.debug.enabled) logger.info(`已创建临时文件: ${tempFilePath}`);
@@ -280,7 +277,6 @@ export class PuppeteerManager {
         }
 
         const browserToClose = this._browser;
-        // 立即重置所有状态，防止新的请求进入
         this._browser = null;
         this._browserPromise = null;
         this._wsEndpoint = null;
@@ -289,7 +285,8 @@ export class PuppeteerManager {
         if (browserToClose) {
             if (this.config.debug.enabled) logger.info('正在关闭浏览器实例...');
             try {
-                if (browserToClose.isConnected()) {
+                // [FIX] 使用 .connected 替代已废弃的 .isConnected()
+                if (browserToClose.connected) {
                     await browserToClose.close();
                     if (this.config.debug.enabled) logger.info('浏览器实例已成功关闭。');
                 }

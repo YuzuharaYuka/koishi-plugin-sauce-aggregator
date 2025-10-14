@@ -1,3 +1,5 @@
+// --- START OF FILE src/config.ts ---
+
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
@@ -49,6 +51,7 @@ export interface PuppeteerConfig {
   browserLaunchTimeout: number
   chromeExecutablePath: string
   concurrency: number;
+  tempPath: string; // [FEAT] 新增临时文件路径配置
 }
 
 // 搜索策略配置
@@ -74,7 +77,7 @@ export abstract class Searcher<T = any> {
 
 // 插件的完整配置接口
 export interface Config {
-  proxy: string; // [FEAT] 新增独立代理配置
+  proxy: string;
   order: { engine: SearchEngineName; enabled: boolean }[]
   enhancerOrder: { engine: EnhancerName; enabled: boolean }[]
   confidenceThreshold: number
@@ -119,8 +122,13 @@ const puppeteerConfig = Schema.object({
     browserLaunchTimeout: Schema.number().default(90).min(10).description('**浏览器启动超时 (秒)**<br>' +
       '等待浏览器进程启动并准备就绪的最长时间。'),
     chromeExecutablePath: Schema.string().description(
-      '**本地浏览器可执行文件路径 (可选)**<br>' +
+      '本地浏览器可执行文件路径 (可选)<br>' +
       '插件会优先使用此路径。如果留空，将尝试自动检测。'
+    ),
+    tempPath: Schema.string().description(
+      '临时文件存储路径 (可选)<br>' +
+      '留空则使用默认路径 `./data/temp/sauce-aggregator`<br>' +
+      '对于 Docker: 此路径应指向 Koishi 和 Puppeteer 容器共享的卷。'
     ),
 })
 
@@ -178,7 +186,7 @@ export const Config: Schema<Config> = Schema.intersect([
 
   Schema.object({
     proxy: Schema.string().default('http://127.0.0.1:7890').description(
-      '**独立代理配置**：`http://<ip>:<port>`或`socks5://<ip>:<port>`<br>' +
+      '**独立代理配置**：如`http://127.0.0.1:7890`<br>' +
       '该配置只影响`danbooru`图源,`soutubot`,`yandex`,`ascii2d`引擎请求。<br>' +
       '其余`ctx.http`请求仍使用`proxy-agent`全局代理配置。'
     ),
@@ -300,3 +308,4 @@ export const Config: Schema<Config> = Schema.intersect([
     }),
   }).description('调试设置'),
 ])
+// --- END OF FILE src/config.ts ---
