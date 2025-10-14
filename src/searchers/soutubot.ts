@@ -25,7 +25,6 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     const tempFilePath = options.tempFilePath;
     const page = await this.puppeteer.getPage();
     try {
-        // [FIX] 启用请求拦截
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             const resourceType = req.resourceType();
@@ -77,16 +76,22 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
         return finalResults;
 
     } catch (error) {
-        if (error.message.includes('Cloudflare')) throw error;
-        
+        // [FEAT] 增强用户反馈
         logger.error(`[soutubot] 搜索过程中发生错误:`, error);
         if (this.mainConfig.debug.enabled) {
             await this.puppeteer.saveErrorSnapshot(page, this.name);
         }
-        if (error.name === 'TimeoutError') {
-            throw new Error(`等待搜索结果超时，网站可能没有响应或没有找到结果。`);
+        
+        // 如果是已知的 Cloudflare 错误，直接向上抛出
+        if (error.message.includes('Cloudflare')) throw error;
+        
+        let friendlyMessage = '搜图bot酱 搜索失败。';
+        if (error.name === 'TimeoutError' || /timeout/i.test(error.message)) {
+            friendlyMessage += '页面操作超时，网站可能没有响应或没有找到结果。请检查代理配置。';
+        } else {
+            friendlyMessage += `内部错误: ${error.message}`;
         }
-        throw error;
+        throw new Error(friendlyMessage);
     } finally {
         if (page && !page.isClosed()) await page.close();
     }

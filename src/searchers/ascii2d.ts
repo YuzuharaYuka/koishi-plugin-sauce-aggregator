@@ -26,11 +26,10 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
     const page = await this.puppeteer.getPage();
 
     try {
-      // [FIX] 启用请求拦截
       await page.setRequestInterception(true);
       page.on('request', (req) => {
           const resourceType = req.resourceType();
-          if (['font', 'media'].includes(resourceType)) { // Ascii2d 需要加载图片
+          if (['font', 'media'].includes(resourceType)) {
               req.abort();
           } else {
               req.continue();
@@ -72,11 +71,18 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
       return results.slice(0, options.maxResults);
 
     } catch(error) {
+        // [FEAT] 增强用户反馈
         logger.error('[ascii2d] 搜索过程中发生错误:', error);
         if (this.mainConfig.debug.enabled) {
             await this.puppeteer.saveErrorSnapshot(page, this.name);
         }
-        throw error;
+        let friendlyMessage = 'Ascii2D 搜索失败。';
+        if (error.name === 'TimeoutError' || /timeout/i.test(error.message)) {
+            friendlyMessage += '页面加载超时，可能是网络问题或目标网站响应缓慢。请检查代理配置。';
+        } else {
+            friendlyMessage += `内部错误: ${error.message}`;
+        }
+        throw new Error(friendlyMessage);
     } finally {
         if (page && !page.isClosed()) await page.close();
     }

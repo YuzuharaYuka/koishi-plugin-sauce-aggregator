@@ -69,17 +69,23 @@ export class Yandex extends Searcher<YandexConfig.Config> {
         return results;
 
     } catch (error) {
+        // [FEAT] 增强用户反馈
         logger.warn(`[yandex] 请求或解析出错: ${error.message}`);
         if (this.mainConfig.debug.enabled) {
             await this.puppeteer.saveErrorSnapshot(page, this.name);
         }
-        throw new Error(`请求 Yandex 失败: ${error.message}`);
+        let friendlyMessage = 'Yandex 搜索失败。';
+        if (error.name === 'TimeoutError' || /timeout/i.test(error.message)) {
+            friendlyMessage += '页面加载超时，可能是网络问题或目标网站响应缓慢。请检查代理配置，或在插件设置中尝试切换 Yandex 域名。';
+        } else {
+            friendlyMessage += `内部错误: ${error.message}`;
+        }
+        throw new Error(friendlyMessage);
     } finally {
         if (page && !page.isClosed()) await page.close();
     }
   }
   
-  // [FIX] 使用 Promise.allSettled 并行处理弹窗检测
   private async handleCookiePopups(page: Page): Promise<void> {
       const cookiePopups = [
           { selector: '#gdpr-popup-v3-button-all', name: 'GDPR v3' },
@@ -90,11 +96,9 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
       const detectionPromises = cookiePopups.map(popup => (async () => {
           try {
-              // 短暂等待以确保弹窗有机会渲染
               await page.waitForSelector(popup.selector, { visible: true, timeout: 3000 });
               if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检测到 '${popup.name}' 弹窗，点击接受...`);
               await page.click(popup.selector);
-              // 等待关闭动画完成
               await page.waitForSelector(popup.selector, { hidden: true, timeout: 2000 });
           } catch (e) {
               // 未找到选择器是正常情况，静默处理
