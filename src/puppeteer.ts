@@ -1,3 +1,5 @@
+// --- START OF FILE src/puppeteer.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
 import puppeteer from 'puppeteer-extra'
@@ -6,6 +8,7 @@ import find from 'puppeteer-finder';
 import type { Browser, Page, ScreenshotOptions } from 'puppeteer-core';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { formatNetworkError } from './utils'
 
 const logger = new Logger('sauce-aggregator:puppeteer')
 
@@ -15,6 +18,7 @@ puppeteer.use(StealthPlugin())
 export class PuppeteerManager {
     private _browser: Browser | null = null;
     private _browserPromise: Promise<Browser> | null = null;
+    private _wsEndpoint: string | null = null;
     private ctx: Context;
     private config: Config;
     private _isInitialized = false;
@@ -30,7 +34,7 @@ export class PuppeteerManager {
 
         logger.info('正在预初始化常驻浏览器实例...');
         try {
-            await this.getBrowser();
+            await this.ensureBrowserIsReady();
             this._isInitialized = true;
             logger.info('常驻浏览器实例已成功预初始化。');
         } catch (error) {
@@ -56,9 +60,8 @@ export class PuppeteerManager {
         }
     }
     
-    // [FIX] 将原始启动逻辑封装，以便添加超时
-    private async _launchBrowserInternal(): Promise<Browser> {
-        const executablePath = await this.getBrowserPath();
+    private _launchBrowserInternal(): Promise<Browser> {
+        const executablePath = this.getBrowserPath();
         if (!executablePath) {
             throw new Error('未能找到任何兼容的浏览器。请在插件的浏览器设置中手动指定路径。');
         }
@@ -83,28 +86,26 @@ export class PuppeteerManager {
             headless: true,
             args: args,
             executablePath: executablePath,
-            protocolTimeout: launchTimeout, // puppeteer 内部的协议超时
-            timeout: launchTimeout, // puppeteer 内部的启动超时
+            protocolTimeout: launchTimeout,
+            timeout: launchTimeout,
         });
     }
 
-    // [FIX] 使用 Promise.race 为浏览器启动添加一个硬性超时
     private launchBrowser(): Promise<Browser> {
         const launchTimeout = this.config.puppeteer.browserLaunchTimeout * 1000;
         
-        return Promise.race([
-            this._launchBrowserInternal(),
-            new Promise<Browser>((_, reject) => 
-                setTimeout(() => reject(new Error(`浏览器启动在 ${this.config.puppeteer.browserLaunchTimeout} 秒内未能完成，操作已超时。`)), launchTimeout)
-            )
-        ]);
-    }
+        const timeoutPromise = new Promise<Browser>((_, reject) => 
+            setTimeout(() => reject(new Error(`浏览器启动在 ${this.config.puppeteer.browserLaunchTimeout} 秒内未能完成，操作已超时。`)), launchTimeout)
+        );
 
-    private getBrowser(): Promise<Browser> {
+        return Promise.race([this._launchBrowserInternal(), timeoutPromise]);
+    }
+    
+    // [REFACTOR] 核心改造：确保浏览器实例可用，如果不可用则销毁并重建
+    private ensureBrowserIsReady(): Promise<Browser> {
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
-            if (this.config.debug.enabled) logger.info('浏览器被再次使用，已取消自动关闭。');
         }
 
         if (this._browser && this._browser.isConnected()) {
@@ -115,27 +116,39 @@ export class PuppeteerManager {
             return this._browserPromise;
         }
 
-        if (this.config.debug.enabled) logger.info('共享浏览器实例不存在或已断开，正在启动...');
+        logger.info('浏览器实例不存在或已断开，正在启动或重建...');
         
         this._browserPromise = (async () => {
+            // 在启动前，先确保旧实例被彻底清理
+            if (this._browser) {
+                await this.dispose().catch(err => logger.warn('在重建浏览器前，清理旧实例时出错:', err.message));
+            }
+            
             try {
-                // [FIX] 现在 launchBrowser() 拥有了可靠的超时机制
                 const browser = await this.launchBrowser();
-                this._browser = browser; // 存储已成功启动的实例
+                logger.info('新的浏览器实例已成功启动。');
+                this._browser = browser;
+                this._wsEndpoint = browser.wsEndpoint();
+
                 browser.on('disconnected', () => {
-                    logger.warn('共享浏览器实例已断开连接。');
+                    logger.warn('浏览器实例连接已断开。');
+                    // 仅当事件源是当前管理的实例时才清理，避免竞态条件
                     if (this._browser === browser) {
                         this._browser = null;
                         this._browserPromise = null;
+                        this._wsEndpoint = null;
                     }
                 });
+                // 启动成功后，将 promise 结果暴露出去，但后续不再依赖此 promise
+                this._browserPromise = null;
                 return browser;
             } catch (error) {
-                // [FIX] 无论启动失败还是超时，都会进入这里，保证状态被重置
                 logger.error('启动浏览器实例时发生严重错误:', error.message);
+                // 确保在失败时清理所有状态，以便下次重试
                 this._browser = null;
                 this._browserPromise = null; 
-                throw error; // 将错误向上抛出，让调用方知道失败了
+                this._wsEndpoint = null;
+                throw error;
             }
         })();
         
@@ -145,38 +158,56 @@ export class PuppeteerManager {
     private async scheduleClose() {
         if (this.config.puppeteer.persistentBrowser || this._closeTimer) return;
 
-        const browser = await this.getBrowser();
-        if ((await browser.pages()).length > 1) {
-            if (this.config.debug.enabled) logger.info(`仍有 ${(await browser.pages()).length - 1} 个活动页面，暂不关闭。`);
-            return;
-        }
+        // [FIX] 确保在调度关闭前，浏览器实例是存在的
+        if (!this._browser) return;
 
-        const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
-        if (timeout <= 0) {
-             if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
-             await this.dispose();
-             return;
-        }
+        try {
+            const pages = await this._browser.pages();
+             // 预留一个 about:blank 页面是正常的
+            if (pages.length > 1) {
+                if (this.config.debug.enabled) logger.info(`仍有 ${pages.length - 1} 个活动页面，暂不关闭。`);
+                return;
+            }
 
-        if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后自动关闭浏览器。`);
-        this._closeTimer = setTimeout(async () => {
-            if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
+            const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
+            if (timeout <= 0) {
+                if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
+                await this.dispose();
+                return;
+            }
+
+            if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后自动关闭浏览器。`);
+            this._closeTimer = setTimeout(async () => {
+                if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
+                await this.dispose();
+                this._closeTimer = null;
+            }, timeout);
+        } catch (error) {
+            logger.warn('调度关闭浏览器时检查页面失败:', error.message);
+            // 如果检查页面都失败了，说明浏览器已经出问题，直接销毁
             await this.dispose();
-            this._closeTimer = null;
-        }, timeout);
+        }
     }
 
     public async getPage(): Promise<Page> {
-        const browser = await this.getBrowser();
-        const page = await browser.newPage();
-        page.setDefaultTimeout(this.config.requestTimeout * 1000);
-        await page.setBypassCSP(true);
-        
-        if (!this.config.puppeteer.persistentBrowser) {
-            page.on('close', () => this.scheduleClose());
-        }
+        try {
+            const browser = await this.ensureBrowserIsReady();
+            const page = await browser.newPage();
+            page.setDefaultTimeout(this.config.requestTimeout * 1000);
+            await page.setBypassCSP(true);
+            
+            page.on('close', () => {
+                if (!this.config.puppeteer.persistentBrowser) {
+                    this.scheduleClose();
+                }
+            });
 
-        return page;
+            return page;
+        } catch (error) {
+            logger.error('获取新页面时发生严重错误:', formatNetworkError(error));
+            // 无论何种错误，都向上抛出，让当前搜索任务失败
+            throw error;
+        }
     }
 
     public async createTempFile(buffer: Buffer, fileName: string): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
@@ -246,25 +277,26 @@ export class PuppeteerManager {
     public async dispose() {
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
-            this._closeTimer = null;
         }
 
-        const browserPromise = this._browserPromise;
-        // 立即重置状态，防止新的请求进入
+        const browserToClose = this._browser;
+        // 立即重置所有状态，防止新的请求进入
         this._browser = null;
         this._browserPromise = null;
+        this._wsEndpoint = null;
+        this._closeTimer = null;
 
-        if (browserPromise) {
-            if (this.config.debug.enabled) logger.info('正在等待浏览器任务完成并关闭...');
+        if (browserToClose) {
+            if (this.config.debug.enabled) logger.info('正在关闭浏览器实例...');
             try {
-                const browser = await browserPromise;
-                if (browser?.isConnected()) {
-                    await browser.close();
+                if (browserToClose.isConnected()) {
+                    await browserToClose.close();
                     if (this.config.debug.enabled) logger.info('浏览器实例已成功关闭。');
                 }
             } catch (error) {
-                logger.warn('关闭浏览器实例时发生错误 (可能是在启动过程中):', error.message);
+                logger.warn('关闭浏览器实例时发生错误:', error.message);
             }
         }
     }
 }
+// --- END OF FILE src/puppeteer.ts ---
