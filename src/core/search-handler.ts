@@ -34,12 +34,16 @@ export class SearchHandler {
         };
     }
 
+    // [FIX] 增加 getEnhancementId 辅助方法，用于生成唯一的图源任务ID
     private getEnhancementId(enhancerName: string, textToSearch: string): string | null {
+        // danbooru/yandere: post id
+        // gelbooru: post id or md5
+        // pixiv: illust id
         const patterns: Record<string, RegExp> = {
-            pixiv: /pixiv\.net\/(?:artworks\/|member_illust\.php\?.*illust_id=)(\d+)|i\.pximg\.net\/img-original\/img\/[^/]+\/[^/]+\/[^/]+\/(?<id>\d+)_p/,
-            danbooru: /danbooru\.donmai\.us\/(?:posts|post\/show)\/(\d+)/,
-            gelbooru: /gelbooru\.com\/index\.php\?.*(?:id=(\d+)|md5=([a-f0-9]{32}))/,
-            yandere: /yande\.re\/post\/show\/(\d+)/,
+            pixiv: /(?:artworks\/|illust_id=)(\d+)/,
+            danbooru: /(?:posts|post\/show)\/(\d+)/,
+            gelbooru: /(?:id=(\d+)|md5=([a-f0-9]{32}))/,
+            yandere: /post\/show\/(\d+)/,
         };
         const regex = patterns[enhancerName];
         if (!regex) return null;
@@ -47,14 +51,15 @@ export class SearchHandler {
         const match = textToSearch.match(regex);
         if (!match) return null;
         
-        const id = match.slice(1).find(g => g !== undefined);
+        // match[1] 是 id, match[2] 可能是 gelbooru 的 md5
+        const id = match[1] || match[2];
         return id ? `${enhancerName}:${id}` : null;
     }
 
     public async enhanceResult(
         result: SearcherResult.Result,
         sortedEnhancers: Enhancer[],
-        processedIds?: Set<string>,
+        processedIds: Set<string>, // [FIX] 修改参数名，更清晰
         successfulEnhancers?: Set<string>
     ): Promise<{ enhancedResult: EnhancedResult | null; enhancementId: string | null }> {
         const textToSearch = [result.url, ...(result.details || [])].join(' ');
@@ -68,9 +73,10 @@ export class SearchHandler {
             }
 
             const enhancementId = this.getEnhancementId(enhancer.name, textToSearch);
-            if (enhancementId && processedIds?.has(enhancementId)) {
+            // [FIX] 核心逻辑：如果 ID 已被处理，则跳过
+            if (enhancementId && processedIds.has(enhancementId)) {
               if (this.config.debug.enabled) logger.info(`[增强器] 跳过重复的图源处理: ${enhancementId}`);
-              continue;
+              continue; // 返回 null，表示没有新的增强结果
             }
         
             try {
@@ -160,7 +166,7 @@ export class SearchHandler {
       mainSearchers: Searcher[],
       attachSearchers: Searcher[],
       isSingleEngineSearch: boolean,
-      isAllSearch: boolean, // [FIX] 新增参数
+      isAllSearch: boolean,
       options: SearchOptions,
       botUser: any,
       session: any,
@@ -221,7 +227,6 @@ export class SearchHandler {
             }
         }
         
-        // [FIX] 修改此处的条件判断，并优化提示文案
         if (lowConfidenceGroups.length > 0 && (!mainResultsFound || isSingleEngineSearch || isAllSearch)) {
              if (!mainResultsFound) {
                 await session.send('未找到高匹配度结果，显示如下:');
@@ -369,7 +374,7 @@ export class SearchHandler {
 
         let highConfidenceSent = false;
         const lowConfidenceOutputs: SearchOutput[] = [];
-        const processedEnhancements = new Set<string>();
+        const processedEnhancements = new Set<string>(); // [FIX] 在 handleParallelSearch 中初始化
         const successfulEnhancers = new Set<string>();
         const completedMainEngines = new Set<SearchEngineName>();
         
@@ -489,4 +494,3 @@ export class SearchHandler {
         }
     }
 }
-// --- END OF FILE src/core/search-handler.ts ---

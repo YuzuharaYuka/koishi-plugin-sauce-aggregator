@@ -222,7 +222,6 @@ export function apply(ctx: Context, config: Config) {
                   ((config.yandex.alwaysAttach && s.name === 'yandex') || (config.ascii2d.alwaysAttach && s.name === 'ascii2d'))
                   && mainSearchers[0]?.name !== s.name
               );
-              // [FIX] 传入 `options.all` 的布尔值
               return searchHandler.handleDirectSearch(mainSearchers, attachSearchers, isSingleEngineSpecified, !!options.all, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
           } else if (config.search.mode === 'parallel') {
               return searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
@@ -260,7 +259,9 @@ export function apply(ctx: Context, config: Config) {
           await session.send('检测到图源链接，正在解析，请稍候...');
           try {
             const dummyResult: SearcherResult.Result = { url, similarity: 100, thumbnail: '', source: '链接解析' };
-            const enhancedData = await searchHandler.enhanceResult(dummyResult, [service.enhancer]);
+            // [FIX] 为 enhanceResult 调用补上第三个参数
+            const processedIds = new Set<string>();
+            const enhancedData = await searchHandler.enhanceResult(dummyResult, [service.enhancer], processedIds);
 
             if (enhancedData?.enhancedResult) {
               const botUser = await session.bot.getSelf();
@@ -301,4 +302,3 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.on('dispose', () => puppeteerManager.dispose());
 }
-// --- END OF FILE src/index.ts ---

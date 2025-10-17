@@ -42,7 +42,8 @@ class PixivApiService {
     };
   }
 
-  private async _refreshAccessToken(): Promise<boolean> {
+  // [FIX] 将普通方法改为箭头函数，以绑定 this 上下文
+  private _refreshAccessToken = async (): Promise<boolean> => {
     const data = new URLSearchParams({
       'grant_type': 'refresh_token',
       'client_id': this.subConfig.clientId,
@@ -68,7 +69,8 @@ class PixivApiService {
     }
   }
 
-  private async _request(url: string, params: Record<string, any>) {
+  // [FIX] 将普通方法改为箭头函数
+  private _request = async (url: string, params: Record<string, any>) => {
     if (!this.accessToken) {
       if (!await this._refreshAccessToken()) {
         throw new Error('无法获取或刷新 Pixiv Access Token。');
@@ -93,7 +95,8 @@ class PixivApiService {
     }
   }
   
-  public async getArtworkDetail(pid: string): Promise<PixivIllust | null> {
+  // [FIX] 将普通方法改为箭头函数
+  public getArtworkDetail = async (pid: string): Promise<PixivIllust | null> => {
     try {
       const response = await this._request(`https://app-api.pixiv.net/v1/illust/detail`, { illust_id: pid, filter: 'for_ios' });
       return response.illust;
@@ -103,7 +106,8 @@ class PixivApiService {
     }
   }
 
-  public async downloadImage(url: string): Promise<Buffer | null> {
+  // [FIX] 将普通方法改为箭头函数
+  public downloadImage = async (url: string): Promise<Buffer | null> => {
     try {
       return await downloadWithRetry(this.ctx, url, {
           retries: this.mainConfig.enhancerRetryCount,
