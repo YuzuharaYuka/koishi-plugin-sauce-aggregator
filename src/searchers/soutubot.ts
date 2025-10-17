@@ -25,15 +25,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     const tempFilePath = options.tempFilePath;
     const page = await this.puppeteer.getPage();
     try {
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            const resourceType = req.resourceType();
-            if (['font', 'media'].includes(resourceType)) {
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
+        // [FIX] 已移除本地的请求拦截逻辑，统一由 puppeteer.ts 处理
         
         const url = `https://soutubot.moe/`
         if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 导航到: ${url}`);
@@ -76,13 +68,11 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
         return finalResults;
 
     } catch (error) {
-        // [FEAT] 增强用户反馈
         logger.error(`[soutubot] 搜索过程中发生错误:`, error);
         if (this.mainConfig.debug.enabled) {
             await this.puppeteer.saveErrorSnapshot(page, this.name);
         }
         
-        // 如果是已知的 Cloudflare 错误，直接向上抛出
         if (error.message.includes('Cloudflare')) throw error;
         
         let friendlyMessage = '搜图bot酱 搜索失败。';
@@ -154,4 +144,3 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     });
   }
 }
-// --- END OF FILE src/searchers/soutubot.ts ---

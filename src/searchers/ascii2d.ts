@@ -26,15 +26,7 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
     const page = await this.puppeteer.getPage();
 
     try {
-      await page.setRequestInterception(true);
-      page.on('request', (req) => {
-          const resourceType = req.resourceType();
-          if (['font', 'media'].includes(resourceType)) {
-              req.abort();
-          } else {
-              req.continue();
-          }
-      });
+      // [FIX] 已移除本地的请求拦截逻辑，统一由 puppeteer.ts 处理
 
       if (this.mainConfig.debug.enabled) logger.info(`[ascii2d] 导航到 ascii2d.net`);
       await page.goto('https://ascii2d.net/');
@@ -71,7 +63,6 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
       return results.slice(0, options.maxResults);
 
     } catch(error) {
-        // [FEAT] 增强用户反馈
         logger.error('[ascii2d] 搜索过程中发生错误:', error);
         if (this.mainConfig.debug.enabled) {
             await this.puppeteer.saveErrorSnapshot(page, this.name);
@@ -126,4 +117,3 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
     }));
   }
 }
-// --- END OF FILE src/searchers/ascii2d.ts ---

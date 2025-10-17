@@ -25,15 +25,7 @@ export class Yandex extends Searcher<YandexConfig.Config> {
     const tempFilePath = options.tempFilePath;
     const page = await this.puppeteer.getPage();
     try {
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            const resourceType = req.resourceType();
-            if (['image', 'font', 'media'].includes(resourceType)) {
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
+        // [FIX] 已移除本地的请求拦截逻辑，统一由 puppeteer.ts 处理
 
         await page.setExtraHTTPHeaders({
             'Accept-Language': 'en-US,en;q=0.9',
@@ -69,7 +61,6 @@ export class Yandex extends Searcher<YandexConfig.Config> {
         return results;
 
     } catch (error) {
-        // [FEAT] 增强用户反馈
         logger.warn(`[yandex] 请求或解析出错: ${error.message}`);
         if (this.mainConfig.debug.enabled) {
             await this.puppeteer.saveErrorSnapshot(page, this.name);
@@ -193,4 +184,3 @@ export class Yandex extends Searcher<YandexConfig.Config> {
     );
   }
 }
-// --- END OF FILE src/searchers/yandex.ts ---

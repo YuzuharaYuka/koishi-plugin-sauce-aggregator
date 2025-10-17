@@ -22,7 +22,8 @@ export class PuppeteerManager {
     private _isInitialized = false;
     private _closeTimer: NodeJS.Timeout | null = null;
     private _restartTimer: NodeJS.Timeout | null = null;
-    private _browserPath: string | null = null; // [FEAT] 新增浏览器路径缓存
+    private _browserPath: string | null = null;
+    private _activePages = 0; // [FEAT] 引入活动页面计数器
 
     constructor(ctx: Context, config: Config) {
         this.ctx = ctx;
@@ -43,7 +44,6 @@ export class PuppeteerManager {
         }
     }
 
-    // [FEAT] 优化 getBrowserPath 方法以使用缓存
     private async getBrowserPath(): Promise<string | null> {
         const customPath = this.config.puppeteer.chromeExecutablePath;
         if (customPath) {
@@ -60,7 +60,7 @@ export class PuppeteerManager {
             if (this.config.debug.enabled) logger.info('正在自动检测浏览器...');
             const browserPath = await find();
             logger.info(`自动检测到浏览器路径: ${browserPath}`);
-            this._browserPath = browserPath; // 缓存路径
+            this._browserPath = browserPath;
             return browserPath;
         } catch (error) {
             logger.warn('puppeteer-finder 未能找到任何浏览器:', error);
@@ -158,48 +158,31 @@ export class PuppeteerManager {
         return this._browserPromise;
     }
     
-    private async scheduleClose() {
+    // [FIX] 重构关闭调度逻辑，使其依赖 _activePages 计数器
+    private scheduleClose() {
         if (this.config.puppeteer.persistentBrowser || this._closeTimer) return;
-        if (!this._browser) return;
-
-        try {
-            const pages = await this._browser.pages();
-            if (pages.length > 1) {
-                if (this.config.debug.enabled) logger.info(`仍有 ${pages.length - 1} 个活动页面，暂不调度关闭。`);
-                return;
-            }
-        } catch(e) {
-             logger.warn('调度关闭浏览器时检查页面失败 (可能是浏览器已关闭):', e.message);
-             return;
-        }
+        if (!this._browser || this._activePages > 0) return; // 如果仍有活动页面，则不调度
 
         const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
         if (timeout <= 0) {
             if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
-            await this.dispose();
+            this.dispose(); // 直接调用 dispose
             return;
         }
 
-        if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后检查并关闭浏览器。`);
+        if (this.config.debug.enabled) logger.info(`检测到浏览器空闲，将在 ${timeout / 1000} 秒后检查并关闭浏览器。`);
         
         this._closeTimer = setTimeout(async () => {
             this._closeTimer = null; 
-            if (!this._browser || !this._browser.connected) return;
-
-            try {
-                const currentPages = await this._browser.pages();
-                if (currentPages.length > 1) { 
-                    if (this.config.debug.enabled) logger.info('空闲超时检查：检测到新的活动页面，取消本次关闭。');
-                    return;
-                }
-
-                if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
-                await this.dispose();
-
-            } catch (error) {
-                logger.warn('执行延迟关闭浏览器时检查页面失败:', error.message);
-                await this.dispose();
+            // 再次检查，确保在等待期间没有新任务进入
+            if (this._activePages > 0) {
+                if (this.config.debug.enabled) logger.info('空闲超时检查：检测到新的活动页面，取消本次关闭。');
+                return;
             }
+            
+            if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
+            await this.dispose();
+
         }, timeout);
     }
 
@@ -218,19 +201,11 @@ export class PuppeteerManager {
     private async _performRestart(): Promise<void> {
         logger.info('开始执行计划中的浏览器重启...');
         
-        if (!this._browser || !this._browser.connected) {
-            logger.warn('计划重启时浏览器已关闭或未连接，将直接尝试重新初始化。');
-        } else {
-            try {
-                const pages = await this._browser.pages();
-                if (pages.length > 1) {
-                    logger.info('检测到浏览器正在使用中，重启将推迟 1 分钟。');
-                    this._restartTimer = setTimeout(() => this._performRestart(), 60 * 1000);
-                    return;
-                }
-            } catch (error) {
-                logger.warn('检查浏览器页面时出错，将继续强制重启:', error.message);
-            }
+        // [FIX] 使用 _activePages 计数器判断是否繁忙
+        if (this._activePages > 0) {
+            logger.info('检测到浏览器正在使用中，重启将推迟 1 分钟。');
+            this._restartTimer = setTimeout(() => this._performRestart(), 60 * 1000);
+            return;
         }
 
         try {
@@ -254,14 +229,14 @@ export class PuppeteerManager {
         try {
             const browser = await this.ensureBrowserIsReady();
             const page = await browser.newPage();
+            this._activePages++; // [FIX] 页面创建后，计数器加一
+
             page.setDefaultTimeout(this.config.requestTimeout * 1000);
             await page.setBypassCSP(true);
             
-            // [FEAT] 集中化请求拦截策略
             await page.setRequestInterception(true);
             page.on('request', (req) => {
                 const resourceType = req.resourceType();
-                // 拦截图片、样式表、字体和媒体文件以提升加载速度
                 if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
                     req.abort();
                 } else {
@@ -270,8 +245,9 @@ export class PuppeteerManager {
             });
 
             page.on('close', () => {
+                this._activePages--; // [FIX] 页面关闭后，计数器减一
                 if (!this.config.puppeteer.persistentBrowser) {
-                    this.scheduleClose();
+                    this.scheduleClose(); // [FIX] 在页面关闭后触发关闭调度
                 }
             });
 
