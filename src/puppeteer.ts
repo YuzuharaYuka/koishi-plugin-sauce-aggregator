@@ -21,6 +21,8 @@ export class PuppeteerManager {
     private config: Config;
     private _isInitialized = false;
     private _closeTimer: NodeJS.Timeout | null = null;
+    private _restartTimer: NodeJS.Timeout | null = null;
+    private _browserPath: string | null = null; // [FEAT] 新增浏览器路径缓存
 
     constructor(ctx: Context, config: Config) {
         this.ctx = ctx;
@@ -34,23 +36,31 @@ export class PuppeteerManager {
         try {
             await this.ensureBrowserIsReady();
             this._isInitialized = true;
+            this._scheduleRestart();
             logger.info('常驻浏览器实例已成功预初始化。');
         } catch (error) {
             logger.error('预初始化常驻浏览器实例失败:', error);
         }
     }
 
+    // [FEAT] 优化 getBrowserPath 方法以使用缓存
     private async getBrowserPath(): Promise<string | null> {
         const customPath = this.config.puppeteer.chromeExecutablePath;
         if (customPath) {
             if (this.config.debug.enabled) logger.info(`使用用户配置的浏览器路径: ${customPath}`);
             return customPath;
         }
+
+        if (this._browserPath) {
+            if (this.config.debug.enabled) logger.info(`使用缓存的浏览器路径: ${this._browserPath}`);
+            return this._browserPath;
+        }
         
         try {
             if (this.config.debug.enabled) logger.info('正在自动检测浏览器...');
             const browserPath = await find();
             logger.info(`自动检测到浏览器路径: ${browserPath}`);
+            this._browserPath = browserPath; // 缓存路径
             return browserPath;
         } catch (error) {
             logger.warn('puppeteer-finder 未能找到任何浏览器:', error);
@@ -100,7 +110,6 @@ export class PuppeteerManager {
     }
     
     private ensureBrowserIsReady(): Promise<Browser> {
-        // [FIX] 此处逻辑保持不变，但在 getPage 中主动清除计时器
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
@@ -153,7 +162,6 @@ export class PuppeteerManager {
         if (this.config.puppeteer.persistentBrowser || this._closeTimer) return;
         if (!this._browser) return;
 
-        // 初始检查，如果当前就有多个页面，则不计划关闭
         try {
             const pages = await this._browser.pages();
             if (pages.length > 1) {
@@ -162,7 +170,7 @@ export class PuppeteerManager {
             }
         } catch(e) {
              logger.warn('调度关闭浏览器时检查页面失败 (可能是浏览器已关闭):', e.message);
-             return; // 无需调度
+             return;
         }
 
         const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
@@ -175,14 +183,11 @@ export class PuppeteerManager {
         if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后检查并关闭浏览器。`);
         
         this._closeTimer = setTimeout(async () => {
-            // [FIX 2] 在关闭前再次检查，这是修复竞态条件的核心
-            // 确保计时器句柄被清除
             this._closeTimer = null; 
             if (!this._browser || !this._browser.connected) return;
 
             try {
                 const currentPages = await this._browser.pages();
-                // 如果在等待期间有新的页面被创建 (通常是 about:blank + 新任务页面)，则取消关闭
                 if (currentPages.length > 1) { 
                     if (this.config.debug.enabled) logger.info('空闲超时检查：检测到新的活动页面，取消本次关闭。');
                     return;
@@ -193,13 +198,53 @@ export class PuppeteerManager {
 
             } catch (error) {
                 logger.warn('执行延迟关闭浏览器时检查页面失败:', error.message);
-                await this.dispose(); // 如果检查失败，也尝试关闭
+                await this.dispose();
             }
         }, timeout);
     }
 
+    private _scheduleRestart(): void {
+        if (!this.config.puppeteer.persistentBrowser || this.config.puppeteer.restartInterval <= 0) {
+            return;
+        }
+        if (this._restartTimer) clearTimeout(this._restartTimer);
+
+        const intervalMs = this.config.puppeteer.restartInterval * 60 * 60 * 1000;
+        logger.info(`浏览器实例将在 ${this.config.puppeteer.restartInterval} 小时后进行下一次计划重启。`);
+
+        this._restartTimer = setTimeout(() => this._performRestart(), intervalMs);
+    }
+
+    private async _performRestart(): Promise<void> {
+        logger.info('开始执行计划中的浏览器重启...');
+        
+        if (!this._browser || !this._browser.connected) {
+            logger.warn('计划重启时浏览器已关闭或未连接，将直接尝试重新初始化。');
+        } else {
+            try {
+                const pages = await this._browser.pages();
+                if (pages.length > 1) {
+                    logger.info('检测到浏览器正在使用中，重启将推迟 1 分钟。');
+                    this._restartTimer = setTimeout(() => this._performRestart(), 60 * 1000);
+                    return;
+                }
+            } catch (error) {
+                logger.warn('检查浏览器页面时出错，将继续强制重启:', error.message);
+            }
+        }
+
+        try {
+            await this.dispose();
+            await this.ensureBrowserIsReady();
+            logger.info('浏览器计划性重启成功。');
+        } catch (error) {
+            logger.error('浏览器计划性重启失败:', error.message);
+        } finally {
+            this._scheduleRestart();
+        }
+    }
+
     public async getPage(): Promise<Page> {
-        // [FIX 1] 主动清除计时器，防止在获取新页面的过程中，旧的关闭计时器触发
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
@@ -212,6 +257,18 @@ export class PuppeteerManager {
             page.setDefaultTimeout(this.config.requestTimeout * 1000);
             await page.setBypassCSP(true);
             
+            // [FEAT] 集中化请求拦截策略
+            await page.setRequestInterception(true);
+            page.on('request', (req) => {
+                const resourceType = req.resourceType();
+                // 拦截图片、样式表、字体和媒体文件以提升加载速度
+                if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+                    req.abort();
+                } else {
+                    req.continue();
+                }
+            });
+
             page.on('close', () => {
                 if (!this.config.puppeteer.persistentBrowser) {
                     this.scheduleClose();
@@ -296,15 +353,15 @@ export class PuppeteerManager {
     }
 
     public async dispose() {
-        if (this._closeTimer) {
-            clearTimeout(this._closeTimer);
-        }
+        if (this._closeTimer) clearTimeout(this._closeTimer);
+        if (this._restartTimer) clearTimeout(this._restartTimer);
 
         const browserToClose = this._browser;
         this._browser = null;
         this._browserPromise = null;
         this._wsEndpoint = null;
         this._closeTimer = null;
+        this._restartTimer = null;
 
         if (browserToClose) {
             if (this.config.debug.enabled) logger.info('正在关闭浏览器实例...');
