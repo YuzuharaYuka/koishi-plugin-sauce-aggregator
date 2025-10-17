@@ -1,5 +1,3 @@
-// --- START OF FILE src/config.ts ---
-
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
@@ -49,9 +47,10 @@ export interface PuppeteerConfig {
   persistentBrowser: boolean
   browserCloseTimeout: number
   browserLaunchTimeout: number
+  restartInterval: number; // [FEAT] 新增重启间隔配置
   chromeExecutablePath: string
   concurrency: number;
-  tempPath: string; // [FEAT] 新增临时文件路径配置
+  tempPath: string;
 }
 
 // 搜索策略配置
@@ -121,6 +120,9 @@ const puppeteerConfig = Schema.object({
       '仅在关闭 `常驻浏览器` 时生效。设置搜索任务结束后，等待多少秒关闭浏览器。'),
     browserLaunchTimeout: Schema.number().default(90).min(10).description('**浏览器启动超时 (秒)**<br>' +
       '等待浏览器进程启动并准备就绪的最长时间。'),
+    // [FEAT] 新增重启间隔配置
+    restartInterval: Schema.number().min(0).default(6).description('**定时重启浏览器 (小时)**<br>' +
+      '仅在开启 `常驻浏览器` 时生效。设置指定时间后，于空闲时自动重启浏览器，以防止因长时间运行而出现问题。设置为 0 则禁用。'),
     chromeExecutablePath: Schema.string().description(
       '本地浏览器可执行文件路径 (可选)<br>' +
       '插件会优先使用此路径。如果留空，将尝试自动检测。'
@@ -308,4 +310,3 @@ export const Config: Schema<Config> = Schema.intersect([
     }),
   }).description('调试设置'),
 ])
-// --- END OF FILE src/config.ts ---
