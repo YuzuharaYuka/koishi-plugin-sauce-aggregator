@@ -1,5 +1,3 @@
-// --- START OF FILE src/puppeteer.ts ---
-
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
 import puppeteer from 'puppeteer-extra'
@@ -102,12 +100,12 @@ export class PuppeteerManager {
     }
     
     private ensureBrowserIsReady(): Promise<Browser> {
+        // [FIX] 此处逻辑保持不变，但在 getPage 中主动清除计时器
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
         }
 
-        // [FIX] 使用 .connected 替代已废弃的 .isConnected()
         if (this._browser && this._browser.connected) {
             return Promise.resolve(this._browser);
         }
@@ -155,33 +153,59 @@ export class PuppeteerManager {
         if (this.config.puppeteer.persistentBrowser || this._closeTimer) return;
         if (!this._browser) return;
 
+        // 初始检查，如果当前就有多个页面，则不计划关闭
         try {
             const pages = await this._browser.pages();
             if (pages.length > 1) {
-                if (this.config.debug.enabled) logger.info(`仍有 ${pages.length - 1} 个活动页面，暂不关闭。`);
+                if (this.config.debug.enabled) logger.info(`仍有 ${pages.length - 1} 个活动页面，暂不调度关闭。`);
                 return;
             }
+        } catch(e) {
+             logger.warn('调度关闭浏览器时检查页面失败 (可能是浏览器已关闭):', e.message);
+             return; // 无需调度
+        }
 
-            const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
-            if (timeout <= 0) {
-                if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
-                await this.dispose();
-                return;
-            }
+        const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
+        if (timeout <= 0) {
+            if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
+            await this.dispose();
+            return;
+        }
 
-            if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后自动关闭浏览器。`);
-            this._closeTimer = setTimeout(async () => {
+        if (this.config.debug.enabled) logger.info(`所有页面已关闭，将在 ${timeout / 1000} 秒后检查并关闭浏览器。`);
+        
+        this._closeTimer = setTimeout(async () => {
+            // [FIX 2] 在关闭前再次检查，这是修复竞态条件的核心
+            // 确保计时器句柄被清除
+            this._closeTimer = null; 
+            if (!this._browser || !this._browser.connected) return;
+
+            try {
+                const currentPages = await this._browser.pages();
+                // 如果在等待期间有新的页面被创建 (通常是 about:blank + 新任务页面)，则取消关闭
+                if (currentPages.length > 1) { 
+                    if (this.config.debug.enabled) logger.info('空闲超时检查：检测到新的活动页面，取消本次关闭。');
+                    return;
+                }
+
                 if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
                 await this.dispose();
-                this._closeTimer = null;
-            }, timeout);
-        } catch (error) {
-            logger.warn('调度关闭浏览器时检查页面失败:', error.message);
-            await this.dispose();
-        }
+
+            } catch (error) {
+                logger.warn('执行延迟关闭浏览器时检查页面失败:', error.message);
+                await this.dispose(); // 如果检查失败，也尝试关闭
+            }
+        }, timeout);
     }
 
     public async getPage(): Promise<Page> {
+        // [FIX 1] 主动清除计时器，防止在获取新页面的过程中，旧的关闭计时器触发
+        if (this._closeTimer) {
+            clearTimeout(this._closeTimer);
+            this._closeTimer = null;
+            if (this.config.debug.enabled) logger.info('检测到新的页面请求，已取消待处理的浏览器关闭计划。');
+        }
+
         try {
             const browser = await this.ensureBrowserIsReady();
             const page = await browser.newPage();
@@ -285,7 +309,6 @@ export class PuppeteerManager {
         if (browserToClose) {
             if (this.config.debug.enabled) logger.info('正在关闭浏览器实例...');
             try {
-                // [FIX] 使用 .connected 替代已废弃的 .isConnected()
                 if (browserToClose.connected) {
                     await browserToClose.close();
                     if (this.config.debug.enabled) logger.info('浏览器实例已成功关闭。');
@@ -296,4 +319,3 @@ export class PuppeteerManager {
         }
     }
 }
-// --- END OF FILE src/puppeteer.ts ---
