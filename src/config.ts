@@ -1,3 +1,5 @@
+// --- START OF FILE src/config.ts ---
+
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
@@ -44,10 +46,11 @@ export interface DebugConfig {
 
 // Puppeteer (浏览器) 配置
 export interface PuppeteerConfig {
+  provider: 'internal' | 'global'; // [FEAT] 新增 provider 配置
   persistentBrowser: boolean
   browserCloseTimeout: number
   browserLaunchTimeout: number
-  restartInterval: number; // [FEAT] 新增重启间隔配置
+  restartInterval: number;
   chromeExecutablePath: string
   concurrency: number;
   tempPath: string;
@@ -112,6 +115,14 @@ export namespace SoutuBot { export interface Config { confidenceThreshold?: numb
 export namespace Pixiv { export interface Config { refreshToken: string; clientId: string; clientSecret: string; postQuality: 'original' | 'large' | 'medium'; allowR18: boolean; enableLinkParsing: boolean; maxImagesInPost: number; } }
 
 const puppeteerConfig = Schema.object({
+    provider: Schema.union([
+      Schema.const('internal').description('插件内置'),
+      Schema.const('global').description('全局服务'),
+    ]).default('internal').description(
+      '**浏览器服务提供**<br>' +
+      '插件内置: 使用插件自带的 puppeteer 服务，可通过简单人机验证。<br>' +
+      '全局服务: 使用由 `koishi-plugin-puppeteer` 或其他插件提供的 puppeteer 服务。'
+    ),
     persistentBrowser: Schema.boolean().default(false).description('**常驻浏览器**<br>' +
       '开启后，浏览器将在插件启动时预加载并常驻，加快后续搜索响应速度，但会占用后台资源。'),
     concurrency: Schema.number().min(1).max(3).default(1).description('**浏览器并发任务数**<br>' +
@@ -120,7 +131,6 @@ const puppeteerConfig = Schema.object({
       '仅在关闭 `常驻浏览器` 时生效。设置搜索任务结束后，等待多少秒关闭浏览器。'),
     browserLaunchTimeout: Schema.number().default(90).min(10).description('**浏览器启动超时 (秒)**<br>' +
       '等待浏览器进程启动并准备就绪的最长时间。'),
-    // [FEAT] 新增重启间隔配置
     restartInterval: Schema.number().min(0).default(6).description('**定时重启浏览器 (小时)**<br>' +
       '仅在开启 `常驻浏览器` 时生效。设置指定时间后，于空闲时自动重启浏览器，以防止因长时间运行而出现问题。设置为 0 则禁用。'),
     chromeExecutablePath: Schema.string().description(
@@ -198,8 +208,8 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     saucenao: Schema.object({
       apiKeys: Schema.array(Schema.string().role('secret')).description('SauceNAO 的 API Key 列表。<br>' +
-        '注册登录 **[SauceNAO](https://saucenao.com/user.php)**，'+
-        '在底部选项 [Account](https://saucenao.com/user.php?page=account-overview) -> '+
+        '注册登录 **[SauceNAO](https://saucenaO.com/user.php)**，'+
+        '在底部选项 [Account](https://saucenaO.com/user.php?page=account-overview) -> '+
         '[api](https://saucenao.com/user.php?page=search-api) -> \`api key\`处生成。'),
       confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
     }).description('SauceNAO 设置'),
@@ -310,3 +320,4 @@ export const Config: Schema<Config> = Schema.intersect([
     }),
   }).description('调试设置'),
 ])
+// --- END OF FILE src/config.ts ---

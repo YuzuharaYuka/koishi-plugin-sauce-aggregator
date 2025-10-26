@@ -1,3 +1,5 @@
+// --- START OF FILE src/puppeteer.ts ---
+
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
 import puppeteer from 'puppeteer-extra'
@@ -10,7 +12,7 @@ import { formatNetworkError } from './utils'
 
 const logger = new Logger('sauce-aggregator:puppeteer')
 
-puppeteer.use(StealthPlugin())
+const internalPuppeteer = puppeteer.use(StealthPlugin());
 
 // 负责管理 Puppeteer 浏览器实例的生命周期、并发和页面创建
 export class PuppeteerManager {
@@ -23,15 +25,24 @@ export class PuppeteerManager {
     private _closeTimer: NodeJS.Timeout | null = null;
     private _restartTimer: NodeJS.Timeout | null = null;
     private _browserPath: string | null = null;
-    private _activePages = 0; // [FEAT] 引入活动页面计数器
+    private _activePages = 0;
 
-    constructor(ctx: Context, config: Config) {
+    private readonly _provider: 'internal' | 'global';
+    private readonly _globalPuppeteer: any;
+
+    constructor(ctx: Context, config: Config, globalPuppeteer?: any) {
         this.ctx = ctx;
         this.config = config;
+        this._provider = config.puppeteer.provider;
+        this._globalPuppeteer = globalPuppeteer;
+
+        if (this._provider === 'global' && !this._globalPuppeteer) {
+            logger.warn('PuppeteerManager in global mode but no global service provided.');
+        }
     }
 
     public async initialize(): Promise<void> {
-        if (this._isInitialized || !this.config.puppeteer.persistentBrowser) return;
+        if (this._provider === 'global' || this._isInitialized || !this.config.puppeteer.persistentBrowser) return;
 
         logger.info('正在预初始化常驻浏览器实例...');
         try {
@@ -90,7 +101,7 @@ export class PuppeteerManager {
             args.push(`--proxy-server=${proxyUrl}`);
         }
 
-        return puppeteer.launch({
+        return internalPuppeteer.launch({
             headless: true,
             args: args,
             executablePath: executablePath,
@@ -110,6 +121,11 @@ export class PuppeteerManager {
     }
     
     private ensureBrowserIsReady(): Promise<Browser> {
+        if (this._provider === 'global') {
+            if (this._globalPuppeteer?.browser) return Promise.resolve(this._globalPuppeteer.browser);
+            return Promise.reject(new Error('全局 puppeteer 服务不可用。'));
+        }
+
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
@@ -158,15 +174,14 @@ export class PuppeteerManager {
         return this._browserPromise;
     }
     
-    // [FIX] 重构关闭调度逻辑，使其依赖 _activePages 计数器
     private scheduleClose() {
-        if (this.config.puppeteer.persistentBrowser || this._closeTimer) return;
-        if (!this._browser || this._activePages > 0) return; // 如果仍有活动页面，则不调度
+        if (this._provider === 'global' || this.config.puppeteer.persistentBrowser || this._closeTimer) return;
+        if (!this._browser || this._activePages > 0) return;
 
         const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
         if (timeout <= 0) {
             if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
-            this.dispose(); // 直接调用 dispose
+            this.dispose();
             return;
         }
 
@@ -174,7 +189,6 @@ export class PuppeteerManager {
         
         this._closeTimer = setTimeout(async () => {
             this._closeTimer = null; 
-            // 再次检查，确保在等待期间没有新任务进入
             if (this._activePages > 0) {
                 if (this.config.debug.enabled) logger.info('空闲超时检查：检测到新的活动页面，取消本次关闭。');
                 return;
@@ -187,7 +201,7 @@ export class PuppeteerManager {
     }
 
     private _scheduleRestart(): void {
-        if (!this.config.puppeteer.persistentBrowser || this.config.puppeteer.restartInterval <= 0) {
+        if (this._provider === 'global' || !this.config.puppeteer.persistentBrowser || this.config.puppeteer.restartInterval <= 0) {
             return;
         }
         if (this._restartTimer) clearTimeout(this._restartTimer);
@@ -201,7 +215,6 @@ export class PuppeteerManager {
     private async _performRestart(): Promise<void> {
         logger.info('开始执行计划中的浏览器重启...');
         
-        // [FIX] 使用 _activePages 计数器判断是否繁忙
         if (this._activePages > 0) {
             logger.info('检测到浏览器正在使用中，重启将推迟 1 分钟。');
             this._restartTimer = setTimeout(() => this._performRestart(), 60 * 1000);
@@ -218,8 +231,39 @@ export class PuppeteerManager {
             this._scheduleRestart();
         }
     }
+    
+    // [FEAT] 增加全局服务连接恢复逻辑
+    private async getGlobalPageWithRetry(): Promise<Page> {
+        if (!this._globalPuppeteer) throw new Error('全局 puppeteer 服务不可用。');
+        try {
+            return await this._globalPuppeteer.page();
+        } catch (error) {
+            // 捕获特定的连接断开错误
+            if (error.message.includes('连接已断开') || error.message.includes('Browser has been closed')) {
+                logger.warn('全局 Puppeteer 服务连接已断开，尝试自动恢复...');
+                try {
+                    // 尝试调用 connect() 来触发重连
+                    await this._globalPuppeteer.connect(); 
+                    logger.info('全局 Puppeteer 服务已重新连接，将在2秒后重试获取页面...');
+                    await this.ctx.sleep(2000); // 等待一下确保连接稳定
+                    return await this._globalPuppeteer.page();
+                } catch (recoveryError) {
+                    logger.error('全局 Puppeteer 服务恢复失败:', recoveryError);
+                    throw new Error(`全局浏览器服务恢复失败: ${recoveryError.message}`);
+                }
+            }
+            // 如果不是可恢复的错误，直接抛出
+            throw error;
+        }
+    }
 
     public async getPage(): Promise<Page> {
+        if (this._provider === 'global') {
+            const page = await this.getGlobalPageWithRetry();
+            await this.setupPage(page);
+            return page;
+        }
+        
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
@@ -229,25 +273,14 @@ export class PuppeteerManager {
         try {
             const browser = await this.ensureBrowserIsReady();
             const page = await browser.newPage();
-            this._activePages++; // [FIX] 页面创建后，计数器加一
+            this._activePages++;
 
-            page.setDefaultTimeout(this.config.requestTimeout * 1000);
-            await page.setBypassCSP(true);
-            
-            await page.setRequestInterception(true);
-            page.on('request', (req) => {
-                const resourceType = req.resourceType();
-                if (['font', 'media'].includes(resourceType)) {
-                    req.abort();
-                } else {
-                    req.continue();
-                }
-            });
+            await this.setupPage(page);
 
             page.on('close', () => {
-                this._activePages--; 
+                this._activePages--;
                 if (!this.config.puppeteer.persistentBrowser) {
-                    this.scheduleClose(); 
+                    this.scheduleClose();
                 }
             });
 
@@ -256,6 +289,21 @@ export class PuppeteerManager {
             logger.error('获取新页面时发生严重错误:', formatNetworkError(error));
             throw error;
         }
+    }
+    
+    private async setupPage(page: Page) {
+        page.setDefaultTimeout(this.config.requestTimeout * 1000);
+        await page.setBypassCSP(true);
+        
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const resourceType = req.resourceType();
+            if (['font', 'media'].includes(resourceType)) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
     }
 
     public async createTempFile(buffer: Buffer, fileName: string): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
@@ -329,6 +377,8 @@ export class PuppeteerManager {
     }
 
     public async dispose() {
+        if (this._provider === 'global') return;
+
         if (this._closeTimer) clearTimeout(this._closeTimer);
         if (this._restartTimer) clearTimeout(this._restartTimer);
 

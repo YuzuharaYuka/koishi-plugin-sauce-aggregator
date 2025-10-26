@@ -1,6 +1,7 @@
 // --- START OF FILE src/index.ts ---
 
 import { Context, Logger, h, Session } from 'koishi'
+import {} from 'koishi-plugin-puppeteer' // 仅为类型声明而导入
 import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName, Searcher as SearcherResult } from './config'
 import { SauceNAO } from './searchers/saucenao'
 import { TraceMoe } from './searchers/tracemoe'
@@ -17,8 +18,11 @@ import { SearchHandler } from './core/search-handler'
 import { getImageUrlAndName, preprocessImage, detectImageType, extractPlainText } from './utils'
 
 export const name = 'sauce-aggregator'
-export const using = ['http']
-export const inject = ['http']
+export const inject = {
+  required: ['http'],
+  optional: ['puppeteer'],
+}
+
 const logger = new Logger(name)
 export { Config }
 
@@ -57,7 +61,19 @@ export const usage = `
 `
 
 export function apply(ctx: Context, config: Config) {
-  const puppeteerManager = new PuppeteerManager(ctx, config);
+  let puppeteerManager: PuppeteerManager;
+  if (config.puppeteer.provider === 'global') {
+    if (ctx.puppeteer) {
+      logger.info('正在使用全局 `puppeteer` 服务。');
+      puppeteerManager = new PuppeteerManager(ctx, config, ctx.puppeteer);
+    } else {
+      logger.warn('配置为使用全局 `puppeteer` 服务，但该服务未启用。需要浏览器的引擎将不可用。');
+      puppeteerManager = new PuppeteerManager(ctx, config, null);
+    }
+  } else {
+    logger.info('正在使用插件内置的 Puppeteer-extra 服务。');
+    puppeteerManager = new PuppeteerManager(ctx, config);
+  }
 
   // 初始化所有 searchers 和 enhancers
   const allSearchers: Record<string, Searcher> = {};
@@ -259,7 +275,6 @@ export function apply(ctx: Context, config: Config) {
           await session.send('检测到图源链接，正在解析，请稍候...');
           try {
             const dummyResult: SearcherResult.Result = { url, similarity: 100, thumbnail: '', source: '链接解析' };
-            // [FIX] 为 enhanceResult 调用补上第三个参数
             const processedIds = new Set<string>();
             const enhancedData = await searchHandler.enhanceResult(dummyResult, [service.enhancer], processedIds);
 
@@ -291,7 +306,7 @@ export function apply(ctx: Context, config: Config) {
 
   // 注册生命周期钩子
   ctx.on('ready', async () => {
-    if (config.puppeteer.persistentBrowser) {
+    if (config.puppeteer.provider === 'internal' && config.puppeteer.persistentBrowser) {
         const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
         const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
         if (needsPuppeteerForSearch) {
@@ -300,5 +315,7 @@ export function apply(ctx: Context, config: Config) {
     }
   });
 
-  ctx.on('dispose', () => puppeteerManager.dispose());
+  ctx.on('dispose', () => {
+    puppeteerManager.dispose();
+  });
 }
