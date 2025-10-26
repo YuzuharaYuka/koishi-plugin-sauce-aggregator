@@ -237,7 +237,7 @@ export class PuppeteerManager {
             await page.setRequestInterception(true);
             page.on('request', (req) => {
                 const resourceType = req.resourceType();
-                if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+                if (['font', 'media'].includes(resourceType)) {
                     req.abort();
                 } else {
                     req.continue();
@@ -245,9 +245,9 @@ export class PuppeteerManager {
             });
 
             page.on('close', () => {
-                this._activePages--; // [FIX] 页面关闭后，计数器减一
+                this._activePages--; 
                 if (!this.config.puppeteer.persistentBrowser) {
-                    this.scheduleClose(); // [FIX] 在页面关闭后触发关闭调度
+                    this.scheduleClose(); 
                 }
             });
 
