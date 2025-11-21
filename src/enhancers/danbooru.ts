@@ -5,7 +5,10 @@ import type { GotScraping } from 'got-scraping'
 
 const logger = new Logger('sauce-aggregator')
 
-let gotScraping: GotScraping;
+// 使用动态导入以避免 get-stream 版本兼容性问题
+// 延迟加载 got-scraping，确保在任何模块系统下都能正常工作
+let gotScrapingModule: { gotScraping: GotScraping } | null = null;
+let gotScraping: GotScraping | null = null;
 
 interface DanbooruPost {
   id: number;
@@ -34,7 +37,7 @@ interface DanbooruPost {
 export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
   public readonly name: 'danbooru' = 'danbooru';
   public readonly needsPuppeteer: boolean = false;
-  
+
   private _gotInstance: GotScraping | null = null;
 
   constructor(ctx: Context, mainConfig: Config, subConfig: DanbooruConfig.Config) {
@@ -42,11 +45,29 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
   }
 
   private async _getGotInstance(isCdn: boolean = false): Promise<GotScraping> {
+    // 确保只导入一次，并处理可能的模块系统兼容性问题
+    // 使用动态导入延迟加载，避免在模块加载时就触发 get-stream 的导入
+    // 这样可以避免 get-stream 版本升级导致的模块系统兼容性问题
+    if (!gotScraping) {
+      try {
+        // 使用动态导入（支持 ESM 和 CommonJS）
+        gotScrapingModule = await import('got-scraping');
+        gotScraping = gotScrapingModule.gotScraping;
+
+        if (!gotScraping) {
+          throw new Error('got-scraping 导入失败：未找到 gotScraping 导出');
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(`[danbooru] 导入 got-scraping 失败: ${errorMessage}`);
+        throw new Error(`无法导入 got-scraping，请检查依赖是否正确安装: ${errorMessage}`);
+      }
+    }
+
     // For CDN requests, we don't need the prefixUrl
     if (isCdn) {
-        gotScraping ??= (await import('got-scraping')).gotScraping;
         const proxyUrl = this.mainConfig.proxy;
-        return gotScraping.extend({
+        return gotScraping!.extend({
             timeout: { request: this.mainConfig.requestTimeout * 1000 },
             retry: { limit: this.mainConfig.enhancerRetryCount },
             proxyUrl: proxyUrl,
@@ -59,15 +80,13 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     }
 
     if (this._gotInstance) return this._gotInstance;
-    
-    gotScraping ??= (await import('got-scraping')).gotScraping;
-    
+
     const proxyUrl = this.mainConfig.proxy;
     if (this.mainConfig.debug.enabled && proxyUrl) {
         logger.info(`[danbooru] got-scraping 将使用独立代理: ${proxyUrl}`);
     }
 
-    return this._gotInstance = gotScraping.extend({
+    return this._gotInstance = gotScraping!.extend({
         prefixUrl: 'https://danbooru.donmai.us',
         timeout: { request: this.mainConfig.requestTimeout * 1000 },
         retry: { limit: this.mainConfig.enhancerRetryCount },
@@ -89,7 +108,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 在链接 ${danbooruUrl} 中未找到有效的帖子 ID。`);
       return null;
     }
-    
+
     try {
         const post = await this.makeApiRequest(postId);
 
@@ -117,7 +136,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
         let imageBuffer: Buffer | undefined;
         if (downloadUrl) {
             if (this.mainConfig.debug.enabled) logger.info(`[danbooru] 正在下载图源图片: ${downloadUrl}`);
-            
+
             const got = await this._getGotInstance(true);
             const keyPair = this.subConfig.keyPairs?.[0];
             const searchParams = (keyPair?.username && keyPair.apiKey) ? {
@@ -127,18 +146,18 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
 
             imageBuffer = await got(downloadUrl, { searchParams }).buffer();
         }
-      
+
         const imageType = getImageTypeFromUrl(post.file_url);
         return { details, imageBuffer, imageType };
-      
+
     } catch (error) {
       // [FIX] 精简错误日志，只保留核心信息
-      const errorMessage = error.name === 'TimeoutError' 
+      const errorMessage = error.name === 'TimeoutError'
           ? `请求超时 (${this.mainConfig.requestTimeout}秒)`
           : (error.message || '未知错误');
 
       logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, errorMessage);
-      
+
       if (this.mainConfig.debug.enabled && error.response) {
           logger.info(`[danbooru] 详细错误响应:
   - Status: ${error.response.statusCode}
@@ -147,12 +166,12 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       throw new Error(`[danbooru] 处理失败: ${errorMessage}`);
     }
   }
-  
+
   private async makeApiRequest(postId: string): Promise<DanbooruPost> {
     const got = await this._getGotInstance();
     const keyPair = this.subConfig.keyPairs?.[0];
     const hasAuth = keyPair?.username && keyPair.apiKey;
-    
+
     const onlyFields = [
         'id', 'created_at', 'score', 'source', 'rating', 'image_width',
         'image_height', 'tag_string', 'tag_string_general', 'tag_string_artist',
@@ -207,7 +226,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     const match = url.match(/\/(\d+)(?:[?#]|$)/);
     return match ? match[1] : null;
   }
-  
+
   private buildDetailNodes(post: DanbooruPost): h[] {
     const info: string[] = [];
     const formatTags = (tagString: string) => (tagString || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean).join(', ');
@@ -225,7 +244,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
 
     info.push(`评分: ${post.score} (收藏: ${post.fav_count})`);
     info.push(`等级: ${post.rating.toUpperCase()}`);
-    
+
     if (post.created_at) {
         const postDate = new Date(post.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
         info.push(`发布于: ${postDate}`);
@@ -237,19 +256,19 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     } else {
         info.push(`文件信息: ${post.image_width}x${post.image_height} (${post.file_ext})`);
     }
-    
+
     if (post.source && post.source.startsWith('http')) {
       info.push(`原始来源: ${post.source}`);
     }
 
     const metaTags = formatTags(post.tag_string_meta);
     if (metaTags) info.push(`元标签: ${metaTags}`);
-    
+
     const allTags = (post.tag_string_general || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean);
     const MAX_GENERAL_TAGS = 35;
     const displayedTags = allTags.slice(0, MAX_GENERAL_TAGS).join(', ');
     const remainingCount = allTags.length - MAX_GENERAL_TAGS;
-    
+
     let tagsText = `标签: ${displayedTags}`;
     if (remainingCount > 0) {
       tagsText += `... (及其他 ${remainingCount} 个)`;

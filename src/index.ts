@@ -1,21 +1,16 @@
-// --- START OF FILE src/index.ts ---
 
-import { Context, Logger, h, Session } from 'koishi'
-import {} from 'koishi-plugin-puppeteer' // 仅为类型声明而导入
-import { Config, Searcher, SearchOptions, Enhancer, SearchEngineName, Searcher as SearcherResult } from './config'
-import { SauceNAO } from './searchers/saucenao'
-import { TraceMoe } from './searchers/tracemoe'
-import { IQDB } from './searchers/iqdb'
-import { Yandex } from './searchers/yandex'
-import { Ascii2D } from './searchers/ascii2d'
-import { SoutuBot } from './searchers/soutubot'
-import { YandeReEnhancer } from './enhancers/yande'
-import { GelbooruEnhancer } from './enhancers/gelbooru'
-import { DanbooruEnhancer } from './enhancers/danbooru'
-import { PixivEnhancer } from './enhancers/pixiv'
-import { PuppeteerManager } from './puppeteer'
-import { SearchHandler } from './core/search-handler'
-import { getImageUrlAndName, preprocessImage, detectImageType, extractPlainText } from './utils'
+// sauce-aggregator 插件入口，负责指令注册与调度
+
+import { Context, Logger } from 'koishi'
+import { Config, SearchEngineName } from './config'
+import { SEARCH_MESSAGES, COMMAND_ERRORS } from './constants'
+import { SearchHandler } from './core/search'
+import { CommandHandler } from './core/command'
+import { LinkParser } from './core/parser'
+import { DebugLogger } from './core/logger'
+import { initializePuppeteerManager, initializeSearchers, initializeEnhancers } from './bootstrap'
+import { registerLifecycleHooks } from './lifecycle'
+import { selectSearchStrategy } from './strategy'
 
 export const name = 'sauce-aggregator'
 export const inject = {
@@ -56,88 +51,43 @@ export const usage = `
 ###	注意：
 *	部分引擎可能需要配置代理才可用, **http** 相关报错请先检查代理网络设置。
 *	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
-*	\`saucenao\` 引擎, \`gelbooru\` , \`danbooru\` , \`pixiv\` 图源需要配置 API Key 或 Token 才可用。 
+*	\`saucenao\` 引擎, \`gelbooru\` , \`danbooru\` , \`pixiv\` 图源需要配置 API Key 或 Token 才可用。
 *	\`yandex\` , \`ascii2d\` ,  \`soutubot\` 引擎需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
 `
 
 export function apply(ctx: Context, config: Config) {
-  let puppeteerManager: PuppeteerManager;
-  if (config.puppeteer.provider === 'global') {
-    if (ctx.puppeteer) {
-      logger.info('正在使用全局 `puppeteer` 服务。');
-      puppeteerManager = new PuppeteerManager(ctx, config, ctx.puppeteer);
-    } else {
-      logger.warn('配置为使用全局 `puppeteer` 服务，但该服务未启用。需要浏览器的引擎将不可用。');
-      puppeteerManager = new PuppeteerManager(ctx, config, null);
-    }
-  } else {
-    logger.info('正在使用插件内置的 Puppeteer-extra 服务。');
-    puppeteerManager = new PuppeteerManager(ctx, config);
-  }
+  // 初始化日志器
+  const debugLogger = new DebugLogger('main', config)
 
-  // 初始化所有 searchers 和 enhancers
-  const allSearchers: Record<string, Searcher> = {};
-  if (config.saucenao.apiKeys?.filter(Boolean).length > 0) {
-    allSearchers.saucenao = new SauceNAO(ctx, config, config.saucenao);
-  } else {
-    logger.info('[saucenao] 未提供任何有效的 API Key，引擎已禁用。');
-  }
-  allSearchers.tracemoe = new TraceMoe(ctx, config, config.tracemoe);
-  allSearchers.iqdb = new IQDB(ctx, config, config.iqdb);
-  allSearchers.yandex = new Yandex(ctx, config, config.yandex, puppeteerManager);
-  allSearchers.ascii2d = new Ascii2D(ctx, config, config.ascii2d, puppeteerManager);
-  allSearchers.soutubot = new SoutuBot(ctx, config, config.soutubot, puppeteerManager);
+  // 初始化核心组件
+  const puppeteerManager = initializePuppeteerManager(ctx, config, debugLogger)
+  const allSearchers = initializeSearchers(ctx, config, puppeteerManager, debugLogger)
+  const allEnhancers = initializeEnhancers(ctx, config, debugLogger)
 
-  const allEnhancers: Record<string, Enhancer> = {};
-  const enhancerRegistry = {
-    yandere: { constructor: YandeReEnhancer, needsKeys: false, keyName: '', messageName: '图源' },
-    gelbooru: { constructor: GelbooruEnhancer, needsKeys: true, keyName: 'API Key', messageName: '图源' },
-    danbooru: { constructor: DanbooruEnhancer, needsKeys: true, keyName: '用户凭据', messageName: '图源' },
-    pixiv: { constructor: PixivEnhancer, needsKeys: true, keyName: 'Refresh Token', messageName: '图源' },
-  };
-
-  for (const name in enhancerRegistry) {
-      const entry = enhancerRegistry[name];
-      
-      let areKeysProvided = !entry.needsKeys;
-      if (entry.needsKeys) {
-        switch (name) {
-          case 'gelbooru':
-            areKeysProvided = config.gelbooru.keyPairs?.some(p => p.userId && p.apiKey);
-            break;
-          case 'danbooru':
-            areKeysProvided = config.danbooru.keyPairs?.some(p => p.username && p.apiKey);
-            break;
-          case 'pixiv':
-            areKeysProvided = !!config.pixiv.refreshToken;
-            break;
-        }
-      }
-
-      if (areKeysProvided) {
-          const constructorArgs: any[] = [ctx, config, config[name]];
-          allEnhancers[name] = new entry.constructor(...constructorArgs);
-      } else {
-          logger.info(`[${name}] ${entry.messageName}未配置任何有效的${entry.keyName}，将无法启用。`);
-      }
-  }
-
+  // 获取已启用的引擎和增强器
   const allEnabledSearchers = config.order
     .filter(item => item.enabled && allSearchers[item.engine])
-    .map(item => allSearchers[item.engine]);
-  
+    .map(item => allSearchers[item.engine])
+
   const sortedEnhancers = config.enhancerOrder
     .filter(item => item.enabled && allEnhancers[item.engine])
-    .map(item => allEnhancers[item.engine]);
+    .map(item => allEnhancers[item.engine])
 
-  if (allEnabledSearchers.length > 0) logger.info(`已启用的搜图引擎顺序: ${allEnabledSearchers.map(s => s.name).join(', ')}`);
-  if (sortedEnhancers.length > 0) logger.info(`已启用的图源顺序: ${sortedEnhancers.map(e => e.name).join(', ')}`);
+  // 输出已启用的引擎和增强器顺序
+  if (allEnabledSearchers.length > 0) {
+    debugLogger.always(`已启用的搜图引擎顺序: ${allEnabledSearchers.map(s => s.name).join(', ')}`)
+  }
+  if (sortedEnhancers.length > 0) {
+    debugLogger.always(`已启用的图源顺序: ${sortedEnhancers.map(e => e.name).join(', ')}`)
+  }
 
-  const searchHandler = new SearchHandler(ctx, config, allSearchers, allEnabledSearchers, puppeteerManager);
+  // 创建处理器
+  const searchHandler = new SearchHandler(ctx, config, allSearchers, allEnabledSearchers, puppeteerManager)
+  const commandHandler = new CommandHandler(ctx, config, allSearchers, allEnabledSearchers)
 
-  // 注册 `sauce` 指令
+  // 注册主搜图指令
   ctx.command('sauce [...text:string]', '聚合搜图')
-    .alias('soutu','搜图')
+    .alias('soutu', '搜图')
     .option('all', '-a  强制搜索所有已启用的引擎')
     .usage([
       '支持多种灵活的搜图方式：',
@@ -154,168 +104,53 @@ export function apply(ctx: Context, config: Config) {
     .example('sauce saucenao [图片]  (使用 SauceNAO 搜索)')
     .example('sauce a [图片]  (使用 ascii2d 搜索)')
     .action(async ({ session, options }, text) => {
-        function parseInput(inputText: string) {
-            const words = (inputText || '').split(/\s+/).filter(Boolean);
-            let searchersToUse: Searcher[] = allEnabledSearchers;
-            let imageInputText: string = inputText || '';
-            let isSingleEngineSpecified = false;
-            
-            const availableEngines = Object.keys(allSearchers) as SearchEngineName[];
-            const engineAliases: Record<string, SearchEngineName> = {
-                's': 'saucenao', 'i': 'iqdb', 't': 'tracemoe', 'y': 'yandex', 'a': 'ascii2d', 'b': 'soutubot',
-            };
-            const firstWord = words[0]?.toLowerCase();
-            const targetEngineName = engineAliases[firstWord] || (availableEngines.includes(firstWord as any) ? firstWord : null) as SearchEngineName;
-            
-            if (targetEngineName) {
-                const targetSearcher = allSearchers[targetEngineName];
-                if (targetSearcher) {
-                    searchersToUse = [targetSearcher];
-                    imageInputText = words.slice(1).join(' ');
-                    isSingleEngineSpecified = true;
-                }
-            }
-            return { searchersToUse, imageInputText, isSingleEngineSpecified };
-        }
+      // 解析指令参数
+      const { searchersToUse, imageInputText, isSingleEngineSpecified } = commandHandler.parseCommandInput(text)
 
-        async function resolveImageInput(session: Session, text: string) {
-          let imgData = getImageUrlAndName(session, text);
-          if (imgData.url) return imgData;
-        
-          await session.send(`请发送图片... (超时: ${config.promptTimeout}秒)`);
-          try {
-            const nextMessageContent = await session.prompt(config.promptTimeout * 1000);
-            if (!nextMessageContent) {
-              await session.send('已取消。');
-              return null;
-            }
-            const messageSession = { elements: h.parse(h.unescape(nextMessageContent)) };
-            imgData = getImageUrlAndName(messageSession, '');
-            
-            if (!imgData.url) {
-              await session.send('未找到图片，已取消。');
-              return null;
-            }
-            return imgData;
-          } catch (e) {
-            if (config.debug.enabled) logger.warn('等待用户图片时出错:', e);
-            await session.send('等待超时，已取消。');
-            return null;
-          }
-        }
-
-        const { searchersToUse, imageInputText, isSingleEngineSpecified } = parseInput(text);
-
-        if (isSingleEngineSpecified && searchersToUse.length === 0) return '指定的搜图引擎无效或未正确配置。';
-        if (!isSingleEngineSpecified && allEnabledSearchers.length === 0) return '沒有启用或指定任何有效的搜图引擎。';
-
-        const imgData = await resolveImageInput(session, imageInputText);
-        if (!imgData) return;
-        
-        try {
-          await session.send("正在搜索...");
-          const rawImageArrayBuffer = await ctx.http.get(imgData.url, { responseType: 'arraybuffer' });
-          
-          if (!/\.(jpe?g|png|gif|webp)$/i.test(imgData.name)) {
-            const imageType = detectImageType(Buffer.from(rawImageArrayBuffer));
-            if (imageType) imgData.name = `${imgData.name}.${imageType}`;
-          }
-          
-          const processedImageBuffer = await preprocessImage(Buffer.from(rawImageArrayBuffer));
-          const searchOptions: SearchOptions = { 
-            imageUrl: imgData.url, 
-            imageBuffer: processedImageBuffer,
-            fileName: imgData.name,
-            maxResults: config.maxResults,
-          };
-          
-          const botUser = await session.bot.getSelf();
-          const collectedErrors: string[] = [];
-  
-          if (isSingleEngineSpecified || options.all) {
-              const mainSearchers = options.all ? allEnabledSearchers : searchersToUse;
-              const attachSearchers = options.all ? [] : allEnabledSearchers.filter(s =>
-                  ((config.yandex.alwaysAttach && s.name === 'yandex') || (config.ascii2d.alwaysAttach && s.name === 'ascii2d'))
-                  && mainSearchers[0]?.name !== s.name
-              );
-              return searchHandler.handleDirectSearch(mainSearchers, attachSearchers, isSingleEngineSpecified, !!options.all, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
-          } else if (config.search.mode === 'parallel') {
-              return searchHandler.handleParallelSearch(allEnabledSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
-          } else {
-              const sequentialSearchers = allEnabledSearchers.filter(s => s.name !== 'yandex' && s.name !== 'ascii2d');
-              return searchHandler.handleSequentialSearch(sequentialSearchers, searchOptions, botUser, session, collectedErrors, sortedEnhancers);
-          }
-        } catch (error) {
-          logger.error('图片处理失败:', error);
-          return '图片处理失败，请检查链接或网络。';
-        }
-    });
-
-  // 注册中间件以自动解析图源链接
-  const linkParsingRegistry = [
-    { name: 'pixiv', regex: /(www\.pixiv\.net\/(en\/)?artworks\/\d+|i\.pximg\.net|www\.pixiv\.net\/member_illust\.php\?.*illust_id=\d+)/, enhancer: allEnhancers.pixiv, config: config.pixiv },
-    { name: 'danbooru', regex: /danbooru\.donmai\.us\/(posts|post\/show)\/\d+/, enhancer: allEnhancers.danbooru, config: config.danbooru },
-    { name: 'gelbooru', regex: /gelbooru\.com\/index\.php\?.*id=\d+/, enhancer: allEnhancers.gelbooru, config: config.gelbooru },
-    { name: 'yandere', regex: /yande\.re\/post\/show\/\d+/, enhancer: allEnhancers.yandere, config: config.yandere },
-  ];
-
-  ctx.middleware(async (session, next) => {
-    const plainText = extractPlainText(session.elements);
-    if (plainText.toLowerCase().startsWith('sauce') || plainText.toLowerCase().startsWith('搜图')) {
-        return next();
-    }
-
-    const urls = plainText.match(/https?:\/\/[^\s]+/g);
-    if (!urls) return next();
-
-    for (const url of urls) {
-      for (const service of linkParsingRegistry) {
-        if (service.enhancer && service.config.enableLinkParsing && service.regex.test(url)) {
-          if (config.debug.enabled) logger.info(`[${service.name}] 检测到链接，开始自动解析: ${url}`);
-          await session.send('检测到图源链接，正在解析，请稍候...');
-          try {
-            const dummyResult: SearcherResult.Result = { url, similarity: 100, thumbnail: '', source: '链接解析' };
-            const processedIds = new Set<string>();
-            const enhancedData = await searchHandler.enhanceResult(dummyResult, [service.enhancer], processedIds);
-
-            if (enhancedData?.enhancedResult) {
-              const botUser = await session.bot.getSelf();
-              const figureMessage = h('figure');
-              if (enhancedData.enhancedResult.imageBuffer) {
-                figureMessage.children.push(h('message', { nickname: '图源图片', avatar: botUser.avatar }, h.image(enhancedData.enhancedResult.imageBuffer, enhancedData.enhancedResult.imageType)))
-              }
-              figureMessage.children.push(h('message', { nickname: '图源信息', avatar: botUser.avatar }, enhancedData.enhancedResult.details));
-              if (enhancedData.enhancedResult.additionalImages?.length > 0) {
-                figureMessage.children.push(...enhancedData.enhancedResult.additionalImages);
-              }
-              await session.send(figureMessage);
-              return; 
-            } else {
-              await session.send('链接解析失败或未找到有效信息。');
-            }
-          } catch (e) {
-            logger.warn(`[${service.name}] 链接解析失败 (URL: ${url}):`, e.message);
-            await session.send(`[${service.name}] 链接解析失败: ${e.message}`);
-          }
-          break;
-        }
+      if (isSingleEngineSpecified && searchersToUse.length === 0) {
+        return COMMAND_ERRORS.INVALID_ENGINE
       }
-    }
-    return next();
-  }, config.prependLinkParsingMiddleware);
+      if (!isSingleEngineSpecified && allEnabledSearchers.length === 0) {
+        return COMMAND_ERRORS.NO_ENABLED_ENGINES
+      }
+
+      const imgData = await commandHandler.resolveImageInput(session, imageInputText)
+      if (!imgData) return
+
+      try {
+        await session.send(SEARCH_MESSAGES.SEARCHING)
+        const searchOptions = await commandHandler.buildSearchOptions(imgData)
+        if (!searchOptions) {
+          logger.warn('图片处理失败：无法构建搜索选项')
+          return SEARCH_MESSAGES.IMAGE_PROCESS_FAILED
+        }
+        const botUser = await session.bot.getSelf()
+        return await selectSearchStrategy(
+          isSingleEngineSpecified,
+          searchOptions,
+          searchHandler,
+          commandHandler,
+          allEnabledSearchers,
+          searchersToUse,
+          options,
+          config,
+          botUser,
+          session,
+          sortedEnhancers
+        )
+      } catch (error) {
+        logger.error('搜索过程中出现异常:', error)
+        return SEARCH_MESSAGES.IMAGE_PROCESS_FAILED
+      }
+    })
+
+  // 注册链接解析中间件
+  const linkParsingHandler = new LinkParser(ctx, config, searchHandler, allEnhancers)
+  ctx.middleware(
+    (session, next) => linkParsingHandler.handleMiddleware(session, next),
+    config.prependLinkParsingMiddleware
+  )
 
   // 注册生命周期钩子
-  ctx.on('ready', async () => {
-    if (config.puppeteer.provider === 'internal' && config.puppeteer.persistentBrowser) {
-        const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot'];
-        const needsPuppeteerForSearch = config.order.some(e => e.enabled && puppeteerSearchers.includes(e.engine));
-        if (needsPuppeteerForSearch) {
-            await puppeteerManager.initialize();
-        }
-    }
-  });
-
-  ctx.on('dispose', () => {
-    puppeteerManager.dispose();
-  });
+  registerLifecycleHooks(ctx, config, puppeteerManager, debugLogger)
 }

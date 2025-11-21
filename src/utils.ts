@@ -5,175 +5,281 @@ import { Context, Logger, h } from 'koishi';
 
 const logger = new Logger('sauce-aggregator:utils');
 
-// 为 getImageUrlAndName 定义一个更精确的类型，以兼容真实和模拟的 Session 对象
+// 图片源接口定义
 interface ImageSource {
-  elements?: h[];
-  quote?: { elements?: h[] };
-  root?: Context;
+  elements?: h[]
+  quote?: { elements?: h[] }
 }
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
-// 标准化网络错误信息
-export function formatNetworkError(error: any): string {
-    if (error.code === 'ETIMEDOUT' || /timeout/i.test(error.message)) {
-      return '请求超时，请检查网络或代理设置。';
-    }
-    if (error.response) {
-      const status = error.response.status || error.response.statusCode;
-      if (status === 401 || status === 403) {
-        return '认证失败 (401/403)，请检查 API Key 或凭据配置。';
-      }
-      if (status === 429) {
-        return '请求过于频繁 (429)，请稍后再试。';
-      }
-      if (status >= 500) {
-        return `服务提供方服务器错误 (${status})，请稍后再试。`;
-      }
-      return `网络请求失败，状态码: ${status}。`;
-    }
-    if (error.name === 'TimeoutError') {
-        return `页面操作超时，目标网站可能无响应或加载缓慢。`;
-    }
-    return error.message || '发生未知网络错误。';
-}
-  
-// 带重试逻辑的通用文件下载函数
-export async function downloadWithRetry(ctx: Context, url: string, options: { retries: number; timeout: number, headers?: Record<string, string> }): Promise<Buffer> {
-    let lastError: Error = null;
-    for (let i = 0; i <= options.retries; i++) {
-        try {
-            const headers = { 'User-Agent': USER_AGENT, ...options.headers };
-            const buffer = await ctx.http.get(url, {
-                responseType: 'arraybuffer',
-                timeout: options.timeout,
-                headers: headers,
-            });
-            return Buffer.from(buffer);
-        } catch (error) {
-            lastError = error;
-            if (i < options.retries) {
-                logger.warn(`[下载器] 下载失败 ${url} (尝试 ${i + 1}/${options.retries + 1}): ${error.message}，2秒后重试...`);
-                await ctx.sleep(2000);
-            }
-        }
-    }
-    logger.warn(`[下载器] 下载 ${url} 失败 (${options.retries + 1}次尝试)。`);
-    throw lastError;
+// 网络错误接口
+interface NetworkError extends Error {
+  code?: string
+  response?: { status: number }
 }
 
-// 从消息元素中提取纯文本内容
-export function extractPlainText(elements: h[]): string {
-    if (!elements) return '';
-    return h.select(elements, 'text').map(e => e.attrs.content).join('').trim();
+type ErrorMessage = string | ((error: NetworkError) => string)
+
+interface ErrorHandler {
+  check: (e: NetworkError) => boolean
+  message: ErrorMessage
 }
 
-// 从URL中推断图片MIME类型
+// 错误处理器配置
+const ERROR_HANDLERS: readonly ErrorHandler[] = [
+  {
+    check: (e) => e.code === 'ETIMEDOUT' || /timeout/i.test(e.message),
+    message: '请求超时，请检查网络或代理设置。',
+  },
+  {
+    check: (e) => e.response?.status === 401 || e.response?.status === 403,
+    message: '认证失败 (401/403)，请检查 API Key 或凭据配置。',
+  },
+  {
+    check: (e) => e.response?.status === 429,
+    message: '请求过于频繁 (429)，请稍后再试。',
+  },
+  {
+    check: (e) => e.response?.status && e.response.status >= 500,
+    message: (e) => `服务提供方服务器错误 (${e.response?.status})，请稍后再试。`,
+  },
+  {
+    check: (e) => !!e.response?.status,
+    message: (e) => `网络请求失败，状态码: ${e.response?.status}。`,
+  },
+  {
+    check: (e) => e.name === 'TimeoutError',
+    message: '页面操作超时，目标网站可能无响应或加载缓慢。',
+  },
+]
+
+// 格式化网络错误信息
+export function formatNetworkError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return '发生未知网络错误。'
+  }
+
+  for (const handler of ERROR_HANDLERS) {
+    if (handler.check(error as NetworkError)) {
+      const msg = handler.message
+      return typeof msg === 'function' ? msg(error as NetworkError) : msg
+    }
+  }
+
+  return error.message || '发生未知网络错误。'
+}
+
+// 带重试的文件下载
+export async function downloadWithRetry(
+  ctx: Context,
+  url: string,
+  options: { retries: number; timeout: number; headers?: Record<string, string> }
+): Promise<Buffer> {
+  if (!url || typeof url !== 'string') {
+    throw new Error('下载 URL 无效')
+  }
+
+  let lastError: Error
+  for (let i = 0; i <= options.retries; i++) {
+    try {
+      const headers = { 'User-Agent': USER_AGENT, ...options.headers }
+      const buffer = await ctx.http.get(url, {
+        responseType: 'arraybuffer',
+        timeout: options.timeout,
+        headers,
+      })
+      return Buffer.from(buffer)
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      if (i < options.retries) {
+        logger.warn(
+          `[下载器] 下载失败 ${url} (尝试 ${i + 1}/${options.retries + 1}): ${lastError.message}，2秒后重试...`
+        )
+        await ctx.sleep(2000)
+      }
+    }
+  }
+  logger.warn(`[下载器] 下载 ${url} 失败 (${options.retries + 1}次尝试)。`)
+  throw lastError
+}
+
+// 提取消息元素中的纯文本
+export function extractPlainText(elements: h[] | undefined): string {
+  if (!elements || !Array.isArray(elements)) return ''
+  return h
+    .select(elements, 'text')
+    .map((e) => (e.attrs?.content ? String(e.attrs.content) : ''))
+    .join('')
+    .trim()
+}
+
+// 从 URL 推断图片类型
 export function getImageTypeFromUrl(url: string): string {
-  const ext = url.split(/[?#]/)[0].split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'png': return 'image/png';
-    case 'gif': return 'image/gif';
-    case 'webp': return 'image/webp';
-    default: return 'image/jpeg';
+  if (!url || typeof url !== 'string') return 'image/jpeg'
+
+  const basePath = url.split(/[?#]/)[0]
+  const ext = basePath.split('.').pop()?.toLowerCase()
+
+  if (!ext) return 'image/jpeg'
+
+  const mimeMap: Record<string, string> = {
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+  }
+  return mimeMap[ext] || 'image/jpeg'
+}
+
+// 检测图片类型
+export function detectImageType(buffer: Buffer): 'jpeg' | 'png' | null {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return null
+
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff && buffer[3]) return 'jpeg'
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47)
+    return 'png'
+  return null
+}
+
+// 预处理图片压缩
+export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<Buffer> {
+  if (!Buffer.isBuffer(buffer)) {
+    logger.error('传入的不是有效的 Buffer 对象')
+    return buffer
+  }
+
+  const ONE_MB = 1024 * 1024
+  if (buffer.length <= maxSizeInMB * ONE_MB) return buffer
+
+  logger.info(
+    `图片体积 (${(buffer.length / ONE_MB).toFixed(2)}MB) 超出 ${maxSizeInMB}MB，正在压缩...`
+  )
+
+  try {
+    const imageType = detectImageType(buffer)
+    if (!imageType) {
+      logger.warn('不支持的图片格式，无法压缩，将使用原图。')
+      return buffer
+    }
+
+    const stream = Readable.from(buffer)
+    const image =
+      imageType === 'jpeg'
+        ? await decodeJPEGFromStream(stream)
+        : await decodePNGFromStream(stream)
+
+    if (image.width <= 0 || image.height <= 0) {
+      logger.warn('图片尺寸无效，无法处理')
+      return buffer
+    }
+
+    const MAX_DIMENSION = 2000
+    const ratio = Math.min(MAX_DIMENSION / image.width, MAX_DIMENSION / image.height, 1)
+    const newWidth = Math.round(image.width * ratio)
+    const newHeight = Math.round(image.height * ratio)
+
+    const newCanvas = make(newWidth, newHeight)
+    const canvasCtx = newCanvas.getContext('2d')
+    canvasCtx.drawImage(
+      image,
+      0,
+      0,
+      image.width,
+      image.height,
+      0,
+      0,
+      newWidth,
+      newHeight
+    )
+
+    const finalBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      const passThrough = new PassThrough()
+
+      passThrough.on('data', (chunk: Buffer) => chunks.push(chunk))
+      passThrough.on('finish', () => {
+        resolve(Buffer.concat(chunks))
+      })
+      passThrough.on('error', reject)
+
+      const encodeStream =
+        imageType === 'jpeg'
+          ? encodeJPEGToStream(newCanvas, passThrough, 90)
+          : encodePNGToStream(newCanvas, passThrough)
+
+      Promise.resolve(encodeStream).catch(reject)
+    })
+
+    logger.info(`图片压缩完成，新体积: ${(finalBuffer.length / ONE_MB).toFixed(2)}MB`)
+    return finalBuffer
+  } catch (error) {
+    logger.error('图片压缩失败:', error)
+    return buffer
   }
 }
 
-// 通过文件头（Magic Number）检测图片类型
-export function detectImageType(buffer: Buffer): 'jpeg' | 'png' | null {
-    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'jpeg';
-    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'png';
-    return null;
+// 查找消息元素中的图片
+function findImageInElements(elements: h[] | undefined): { imgElement: h | undefined; textContent: string } {
+  if (!Array.isArray(elements)) {
+    return { imgElement: undefined, textContent: '' }
+  }
+
+  const imgElement = elements.find((e) => e.type === 'img')
+  const textContent = imgElement ? '' : extractPlainText(elements)
+
+  return { imgElement, textContent }
 }
-  
-// 对体积过大的图片进行压缩和缩放处理
-export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<Buffer> {
-    const ONE_MB = 1024 * 1024;
-    if (buffer.length <= maxSizeInMB * ONE_MB) return buffer;
-  
-    logger.info(`图片体积 (${(buffer.length / ONE_MB).toFixed(2)}MB) 超出 ${maxSizeInMB}MB，正在压缩...`);
-    
+
+// 获取图片 URL 和名称
+export function getImageUrlAndName(
+  session: ImageSource,
+  text: string
+): { url: string | null; name: string | null } {
+  if (!session || typeof session !== 'object') {
+    return { url: null, name: null }
+  }
+
+  let url: string | undefined
+  let imgElement: h | undefined
+  let textToParse = typeof text === 'string' ? text : ''
+
+  const { imgElement: element1, textContent: text1 } = findImageInElements(session.elements)
+  if (element1?.attrs?.src) {
+    url = String(element1.attrs.src)
+    imgElement = element1
+  } else if (text1) {
+    textToParse = text1
+  }
+
+  if (!url && session.quote && typeof session.quote === 'object') {
+    const { imgElement: element2, textContent: text2 } = findImageInElements(session.quote.elements)
+    if (element2?.attrs?.src) {
+      url = String(element2.attrs.src)
+      imgElement = element2
+    } else if (text2 && !textToParse) {
+      textToParse = text2
+    }
+  }
+
+  if (!url && textToParse) {
     try {
-      const imageType = detectImageType(buffer);
-      if (!imageType) {
-        logger.warn(`不支持的图片格式，无法压缩，将使用原图。`);
-        return buffer;
+      const potentialUrl = textToParse.trim().split(/\s+/)[0]
+      new URL(potentialUrl)
+      if (potentialUrl.startsWith('http')) {
+        url = potentialUrl
       }
-  
-      const stream = Readable.from(buffer);
-      const image = imageType === 'jpeg'
-        ? await decodeJPEGFromStream(stream)
-        : await decodePNGFromStream(stream);
-  
-      const MAX_DIMENSION = 2000;
-      const ratio = Math.min(MAX_DIMENSION / image.width, MAX_DIMENSION / image.height, 1);
-      const newWidth = Math.round(image.width * ratio);
-      const newHeight = Math.round(image.height * ratio);
-  
-      const newCanvas = make(newWidth, newHeight);
-      const ctx = newCanvas.getContext('2d');
-      ctx.drawImage(image, 0, 0, image.width, image.height, 0, 0, newWidth, newHeight);
-  
-      const passThrough = new PassThrough();
-      const chunks: Buffer[] = [];
-      passThrough.on('data', chunk => chunks.push(chunk));
-      
-      const encodePromise = imageType === 'jpeg'
-        ? encodeJPEGToStream(newCanvas, passThrough, 90)
-        : encodePNGToStream(newCanvas, passThrough);
-  
-      await encodePromise;
-      const finalBuffer = Buffer.concat(chunks);
-      logger.info(`图片压缩完成，新体积: ${(finalBuffer.length / ONE_MB).toFixed(2)}MB`);
-      return finalBuffer;
-  
-    } catch (error) {
-      logger.error('图片压缩失败:', error);
-      return buffer;
+    } catch {
     }
-}
+  }
 
-// 从 Session 或模拟对象中按优先级解析出图片URL和文件名
-export function getImageUrlAndName(session: ImageSource, text: string): { url: string; name: string } {
-    let url: string;
-    let imgElement: h;
-    let textToParse = text;
+  if (!url) {
+    return { url: null, name: null }
+  }
 
-    imgElement = session.elements?.find(e => e.type === 'img');
-    url = imgElement?.attrs.src;
-    
-    if (!url) {
-        const rawCurrentText = extractPlainText(session.elements);
-        if (rawCurrentText) {
-            textToParse = rawCurrentText;
-        }
-    }
-    
-    if (!url && session.quote) {
-        imgElement = session.quote.elements?.find(e => e.type === 'img');
-        url = imgElement?.attrs.src;
-        if (!url) {
-            textToParse = extractPlainText(session.quote.elements);
-        }
-    }
+  const rawName =
+    (imgElement?.attrs?.file ? String(imgElement.attrs.file) : url.split('/').pop()?.split('?')[0]) ||
+    'image.jpg'
+  const name = rawName.replace(/[\r\n"']+/g, '')
 
-    if (!url && textToParse) {
-        try {
-            const potentialUrl = textToParse.trim().split(/\s+/)[0];
-            new URL(potentialUrl);
-            if (potentialUrl.startsWith('http')) {
-                url = potentialUrl;
-            }
-        } catch {}
-    }
-
-    if (!url) return { url: null, name: null };
-    
-    const rawName = (imgElement?.attrs.file || url.split('/').pop().split('?')[0]) || 'image.jpg';
-    const name = rawName.replace(/[\r\n"']+/g, '');
-
-    if (session.root?.config.debug) {
-      logger.info(`[Debug] 解析到图片 URL: ${url}`);
-    }
-    return { url, name };
+  return { url, name }
 }

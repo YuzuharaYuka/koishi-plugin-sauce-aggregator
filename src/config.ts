@@ -1,21 +1,42 @@
-// --- START OF FILE src/config.ts ---
+
+// 插件配置与类型定义
 
 import { Schema, Context, h } from 'koishi'
 import { Buffer } from 'buffer'
 
+
+// 支持的搜图引擎标识
 export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot'
+// 支持的图源增强器标识
 export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru' | 'pixiv'
 
-// 搜图函数的输入选项
+
+// 搜图函数输入选项
 export interface SearchOptions {
-  imageUrl: string;
-  imageBuffer: Buffer;
-  fileName: string;
-  maxResults: number;
-  tempFilePath?: string;
+  imageUrl: string
+  imageBuffer: Buffer
+  fileName: string
+  maxResults: number
+  tempFilePath?: string
 }
 
-// 搜图引擎返回结果的统一格式
+
+// 图片输入信息
+export interface ImageInput {
+  url: string
+  name: string
+}
+
+
+// 指令参数解析结果
+export interface CommandParseResult {
+  searchersToUse: Searcher[]
+  imageInputText: string
+  isSingleEngineSpecified: boolean
+}
+
+
+// 搜图引擎返回结果格式
 export namespace Searcher {
   export interface Result {
     thumbnail: string
@@ -30,7 +51,8 @@ export namespace Searcher {
   }
 }
 
-// 图源增强器返回结果的统一格式
+
+// 图源增强器返回结果格式
 export interface EnhancedResult {
   details: h[]
   imageBuffer?: Buffer
@@ -38,15 +60,17 @@ export interface EnhancedResult {
   additionalImages?: h[]
 }
 
+
 // 调试配置
 export interface DebugConfig {
   enabled: boolean
   logApiResponses: (SearchEngineName | EnhancerName)[]
 }
 
-// Puppeteer (浏览器) 配置
+
+// Puppeteer 浏览器配置
 export interface PuppeteerConfig {
-  provider: 'internal' | 'global'; // [FEAT] 新增 provider 配置
+  provider: 'internal' | 'global'; // 浏览器服务方式
   persistentBrowser: boolean
   browserCloseTimeout: number
   browserLaunchTimeout: number
@@ -56,13 +80,15 @@ export interface PuppeteerConfig {
   tempPath: string;
 }
 
+
 // 搜索策略配置
 export interface SearchConfig {
-    mode: 'sequential' | 'parallel';
-    parallelHighConfidenceStrategy: 'first' | 'all';
+  mode: 'sequential' | 'parallel';
+  parallelHighConfidenceStrategy: 'first' | 'all';
 }
 
-// 图源增强器的抽象基类
+
+// 图源增强器抽象类
 export abstract class Enhancer<T = any> {
   abstract name: EnhancerName
   public needsPuppeteer: boolean = false;
@@ -70,14 +96,16 @@ export abstract class Enhancer<T = any> {
   abstract enhance(result: Searcher.Result): Promise<EnhancedResult | null>;
 }
 
-// 搜图引擎的抽象基类
+
+// 搜图引擎抽象类
 export abstract class Searcher<T = any> {
   abstract name: SearchEngineName
   constructor(public ctx: Context, public mainConfig: Config, public subConfig: T) {}
   abstract search(options: SearchOptions): Promise<Searcher.Result[]>
 }
 
-// 插件的完整配置接口
+
+// 插件完整配置接口
 export interface Config {
   proxy: string;
   order: { engine: SearchEngineName; enabled: boolean }[]
@@ -88,7 +116,7 @@ export interface Config {
   requestTimeout: number
   prependLinkParsingMiddleware: boolean;
   enhancerRetryCount: number;
-  search: SearchConfig 
+  search: SearchConfig
   puppeteer: PuppeteerConfig
   debug: DebugConfig
   saucenao: SauceNAO.Config
@@ -183,7 +211,7 @@ export const Config: Schema<Config> = Schema.intersect([
           Schema.const('first').description('返回最先找到的结果'),
           Schema.const('all').description('返回所有高匹配度结果'),
       ]).default('first').description(
-          '并行模式下的高匹配度结果策略' 
+          '并行模式下的高匹配度结果策略'
       )
     }),
     confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值 (%)。当引擎未设置独立阈值时，将使用此值。'),
@@ -208,8 +236,8 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     saucenao: Schema.object({
       apiKeys: Schema.array(Schema.string().role('secret')).description('SauceNAO 的 API Key 列表。<br>' +
-        '注册登录 **[SauceNAO](https://saucenaO.com/user.php)**，'+
-        '在底部选项 [Account](https://saucenaO.com/user.php?page=account-overview) -> '+
+        '注册登录 **[SauceNAO](https://saucenao.com/user.php)**，'+
+        '在底部选项 [Account](https://saucenao.com/user.php?page=account-overview) -> '+
         '[api](https://saucenao.com/user.php?page=search-api) -> \`api key\`处生成。'),
       confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
     }).description('SauceNAO 设置'),
@@ -320,4 +348,3 @@ export const Config: Schema<Config> = Schema.intersect([
     }),
   }).description('调试设置'),
 ])
-// --- END OF FILE src/config.ts ---
