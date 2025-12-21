@@ -45,6 +45,24 @@ const saucenaoIndexMap: Record<number, string> = {
  44: 'Skeb',
 }
 
+const siteNameMap: Record<string, string> = {
+  'pixiv.net': 'Pixiv',
+  'twitter.com': 'Twitter',
+  'danbooru.donmai.us': 'Danbooru',
+  'gelbooru.com': 'Gelbooru',
+  'yande.re': 'Yande.re',
+  'konachan.com': 'Konachan',
+  'mangadex.org': 'MangaDex',
+  'anidb.net': 'AniDB',
+  'myanimelist.net': 'MyAnimeList',
+  'anilist.co': 'Anilist',
+  'e-hentai.org': 'E-Hentai',
+  'nhentai.net': 'nhentai',
+  'artstation.com': 'ArtStation',
+  'deviantart.com': 'DeviantArt',
+  'furaffinity.net': 'FurAffinity',
+}
+
 export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
   public readonly name: SearchEngineName = 'saucenao'
   private keyIndex = 0
@@ -61,12 +79,11 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
       return []
     }
 
-    const keyQueue = [...apiKeys.slice(this.keyIndex), ...apiKeys.slice(0, this.keyIndex)]
-    let keysTried = 0
+    let lastError: Error | null = null
 
-    for (const apiKey of keyQueue) {
-      const currentKeyIndex = (this.keyIndex + keysTried) % apiKeys.length
-      keysTried++
+    for (let i = 0; i < apiKeys.length; i++) {
+      const currentKeyIndex = (this.keyIndex + i) % apiKeys.length
+      const apiKey = apiKeys[currentKeyIndex]
 
       try {
         const startTime = Date.now()
@@ -85,9 +102,6 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
         if (this.mainConfig.debug.enabled) logger.info(`[saucenao] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
 
         const data = await this.ctx.http.post(url, form, { timeout: this.mainConfig.requestTimeout * 1000 })
-
-        // 更新 keyIndex，避免重复从头开始
-        this.keyIndex = (this.keyIndex + keysTried) % apiKeys.length
 
         // 请求成功时记录调试信息
         if (this.mainConfig.debug.enabled) {
@@ -108,36 +122,45 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
           const retryableErrors = ['Search Rate Too High', 'Daily Search Limit Exceeded', 'Invalid API key', 'does not permit API usage']
           if (retryableErrors.some((e) => message.includes(e))) {
             logger.warn(`[saucenao] 第 ${currentKeyIndex + 1} 个 Key 失败: ${message}，尝试下一个`)
+            lastError = new Error(message)
             continue
           }
           throw new Error(`API 返回错误: ${message || '未知客户端错误'}`)
         }
 
+        // 成功后更新 keyIndex 为下一个
+        this.keyIndex = (currentKeyIndex + 1) % apiKeys.length
+
         if (!data.results) return []
         return this._parseResults(data.results)
 
       } catch (error) {
+        lastError = error as Error
         // HTTP / 网络层的可重试错误判断
-        const responseMessage = (error as any).response?.data?.header?.message || ''
+        const response = (error as any)?.response
+        const responseMessage = response?.data?.header?.message || ''
         const retryableHttpErrors = ['does not permit API usage', 'Invalid API key', 'Daily Search Limit Exceeded']
 
         if (retryableHttpErrors.some((e) => responseMessage.includes(e))) {
-          logger.warn(`[saucenao] 第 ${currentKeyIndex + 1} 个 Key 失败 (HTTP ${(error as any).response?.status}): ${responseMessage}，尝试下一个`)
+          logger.warn(`[saucenao] 第 ${currentKeyIndex + 1} 个 Key 失败 (HTTP ${response?.status}): ${responseMessage}，尝试下一个`)
           continue
         }
 
         logger.warn(`[saucenao] 请求出错，将中止此引擎的搜索: ${(error as Error).message}`)
-        if (this.mainConfig.debug.enabled && (error as any).response) {
-          logger.debug(`[saucenao] 响应状态: ${(error as any).response.status}`, `响应数据: ${JSON.stringify((error as any).response.data)}`)
+        if (this.mainConfig.debug.enabled && response) {
+          logger.debug(`[saucenao] 响应状态: ${response.status}`, `响应数据: ${JSON.stringify(response.data)}`)
         }
 
-        this.keyIndex = (this.keyIndex + keysTried) % apiKeys.length
+        // 发生不可重试错误时，也要轮换 Key，避免下次卡在坏 Key 上
+        this.keyIndex = (currentKeyIndex + 1) % apiKeys.length
         throw error
       }
     }
 
-    this.keyIndex = (this.keyIndex + keysTried) % apiKeys.length
-    throw new Error('所有 SauceNAO API Key 均尝试失败。')
+    // 循环结束，说明所有 Key 都试过了
+    // 轮换到下一个，虽然都失败了
+    this.keyIndex = (this.keyIndex + 1) % apiKeys.length
+    throw new Error(`所有 SauceNAO API Key 均尝试失败。最后错误: ${lastError?.message || '未知错误'}`)
   }
 
   // 解析 SauceNAO 返回的原始结果为 Searcher.Result 列表
@@ -175,24 +198,6 @@ export class SauceNAO extends Searcher<SauceNAOConfig.Config> {
 
   // 格式化额外链接为可读字符串列表
   private _formatExtraUrls(ext_urls: string[], sourceUrl: string): string[] {
-    const siteNameMap: Record<string, string> = {
-      'pixiv.net': 'Pixiv',
-      'twitter.com': 'Twitter',
-      'danbooru.donmai.us': 'Danbooru',
-      'gelbooru.com': 'Gelbooru',
-      'yande.re': 'Yande.re',
-      'konachan.com': 'Konachan',
-      'mangadex.org': 'MangaDex',
-      'anidb.net': 'AniDB',
-      'myanimelist.net': 'MyAnimeList',
-      'anilist.co': 'Anilist',
-      'e-hentai.org': 'E-Hentai',
-      'nhentai.net': 'nhentai',
-      'artstation.com': 'ArtStation',
-      'deviantart.com': 'DeviantArt',
-      'furaffinity.net': 'FurAffinity',
-    }
-
     return [...new Set([sourceUrl, ...ext_urls].filter(Boolean))]
       .filter((url) => url !== ext_urls[0])
       .map((url) => {

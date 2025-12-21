@@ -9,22 +9,24 @@ export class DebugLogger {
   private enabled: boolean
   private logger: KoishiLogger
   private logApiResponses: Set<string>
+  private moduleName: string
 
   constructor(moduleName: string, config: Config) {
-    this.logger = new KoishiLogger(`sauce-aggregator:${moduleName}`)
+    this.moduleName = moduleName
+    this.logger = new KoishiLogger('sauce-aggregator')
     this.enabled = config.debug.enabled
     this.logApiResponses = new Set(config.debug.logApiResponses)
   }
 
   info(message: string, ...args: unknown[]): void {
     if (this.enabled) {
-      this.logger.info(message, ...args)
+      this.logger.info(`[${this.moduleName}] ${message}`, ...args)
     }
   }
 
   warn(message: string, ...args: unknown[]): void {
     if (this.enabled) {
-      this.logger.warn(message, ...args)
+      this.logger.warn(`[${this.moduleName}] ${message}`, ...args)
     }
   }
 
@@ -35,7 +37,7 @@ export class DebugLogger {
   }
 
   always(message: string, ...args: unknown[]): void {
-    this.logger.info(message, ...args)
+    this.logger.info(`[${this.moduleName}] ${message}`, ...args)
   }
 }
 

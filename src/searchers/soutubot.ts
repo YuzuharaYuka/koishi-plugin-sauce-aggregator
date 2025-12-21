@@ -9,6 +9,7 @@ const logger = new Logger('sauce-aggregator')
 export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     public readonly name: SearchEngineName = 'soutubot'
     private puppeteer: PuppeteerManager
+    private readonly BASE_URL = 'https://soutubot.moe/'
 
     constructor(ctx: Context, mainConfig: Config, subConfig: SoutuBotConfig.Config, puppeteerManager: PuppeteerManager) {
         super(ctx, mainConfig, subConfig)
@@ -28,9 +29,8 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
 
         try {
             // 导航到目标站点
-            const url = `https://soutubot.moe/`
-            if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 导航到: ${url}`)
-            await page.goto(url, { waitUntil: 'networkidle0' })
+            if (this.mainConfig.debug.enabled) logger.info(`[soutubot] 导航到: ${this.BASE_URL}`)
+            await page.goto(this.BASE_URL, { waitUntil: 'domcontentloaded' })
 
             // 检查并处理 Cloudflare 人机验证
             if (await this.puppeteer.checkForCloudflare(page)) {
@@ -43,7 +43,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
 
             // 上传图片文件
             const inputSelector = 'input[type="file"]'
-            await page.waitForSelector(inputSelector)
+            await page.waitForSelector(inputSelector, { timeout: this.mainConfig.requestTimeout * 1000 })
             const inputUploadHandle = await page.$(inputSelector)
             await inputUploadHandle.uploadFile(tempFilePath)
 
@@ -51,7 +51,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
             const firstResultSelector = '.card-2'
             const noResultSelector = 'div.text-center > h3'
             if (this.mainConfig.debug.enabled) logger.info('[soutubot] 等待搜索结果加载')
-            await page.waitForSelector(`${firstResultSelector}, ${noResultSelector}`)
+            await page.waitForSelector(`${firstResultSelector}, ${noResultSelector}`, { timeout: this.mainConfig.requestTimeout * 1000 })
             if (this.mainConfig.debug.enabled) logger.info('[soutubot] 结果已加载，开始解析')
 
             // 解析并格式化结果
@@ -98,6 +98,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
             return cards.slice(0, maxNeeded).map((card) => {
                 const similarityLabel = Array.from(card.querySelectorAll('span')).find((el) => el.textContent?.trim() === '匹配度:')
                 const similarityText = similarityLabel?.nextElementSibling?.textContent?.trim().replace('%', '') || '0'
+                const parsedSimilarity = parseFloat(similarityText)
 
                 const title = (card.querySelector('.font-semibold span') as HTMLElement)?.innerText
                 const thumbnail = (card.querySelector('a[target="_blank"] img') as HTMLImageElement)?.src
@@ -114,7 +115,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
 
                 return {
                     thumbnail,
-                    similarity: parseFloat(similarityText),
+                    similarity: isNaN(parsedSimilarity) ? 0 : parsedSimilarity,
                     title,
                     sourceName,
                     language,
@@ -132,6 +133,12 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
             const details: string[] = []
             if (res.language) details.push(`语言: ${res.language}`)
 
+            // 尝试提取 ID
+            const idMatch = res.detailUrl?.match(/\/g\/(\d+)/) || res.imageUrl?.match(/\/g\/(\d+)/)
+            if (idMatch) {
+                details.push(`ID: ${idMatch[1]}`)
+            }
+
             const pageMatch = res.imagePageText?.match(/\(P(\d+)\)/)
             if (res.imageUrl) {
                 let linkText = '图片页'
@@ -146,6 +153,6 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
                 source: `[${res.sourceName}] ${res.title || '未知作品'}`,
                 details,
             }
-        })
+        }).filter(item => !!item.url) // 过滤掉没有有效链接的结果
     }
 }

@@ -65,7 +65,7 @@ sauce b [图片]  # b 是 soutubot 的别名
 | `search.mode` | `string` | `sequential` | 搜索模式: `sequential` (串行) 或 `parallel` (并行)。 |
 | `search.parallelHighConfidenceStrategy` | `string` | `first` | 并行模式下，高匹配度结果的返回策略: `first` (最先) 或 `all` (所有)。 |
 | `confidenceThreshold` | `number` | `85` | 全局高匹配度阈值 (%)。 |
-| `maxResults` | `number` | `2` | 无高匹配度结果时，每个引擎最多显示的低相似度结果数量。 |
+| `maxResults` | `number` | `2` | 低匹配度结果的最大显示数量 (0 表示不显示)。 |
 | `promptTimeout` | `number` | `60` | 等待用户发送图片的超时时间 (秒)。 |
 | `requestTimeout` | `number` | `30` | 全局网络请求超时时间 (秒)。 |
 | `enhancerRetryCount` | `number` | `1` | 图源下载失败时的额外重试次数。 |

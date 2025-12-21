@@ -14,7 +14,7 @@ import { YandeReEnhancer } from './enhancers/yande'
 import { GelbooruEnhancer } from './enhancers/gelbooru'
 import { DanbooruEnhancer } from './enhancers/danbooru'
 import { PixivEnhancer } from './enhancers/pixiv'
-import { PuppeteerManager } from './puppeteer'
+import { PuppeteerManager, GlobalPuppeteer } from './puppeteer'
 import { DebugLogger } from './core/logger'
 import { Logger } from 'koishi'
 
@@ -30,7 +30,7 @@ interface EnhancerMetadata {
 }
 
 // 创建各图源增强器的元数据和验证器
-const createEnhancerMetadata = (): Record<string, EnhancerMetadata> => ({
+const ENHANCER_METADATA: Record<string, EnhancerMetadata> = {
   yandere: {
     constructor: YandeReEnhancer,
     needsKeys: false,
@@ -59,20 +59,20 @@ const createEnhancerMetadata = (): Record<string, EnhancerMetadata> => ({
     configKey: 'pixiv',
     validator: (c: Config) => !!c.pixiv.refreshToken,
   },
-})
+}
 
 // 初始化 Puppeteer 管理器
 export function initializePuppeteerManager(ctx: Context, config: Config, debugLogger: DebugLogger): PuppeteerManager {
   if (config.puppeteer.provider === 'global') {
     if (ctx.puppeteer) {
-      debugLogger.always('正在使用全局 `puppeteer` 服务。')
-      return new PuppeteerManager(ctx, config, ctx.puppeteer)
+      logger.info('[bootstrap] 正在使用全局 `puppeteer` 服务。')
+      return new PuppeteerManager(ctx, config, ctx.puppeteer as unknown as GlobalPuppeteer)
     } else {
-      logger.warn('配置为使用全局 `puppeteer` 服务，但该服务未启用。需要浏览器的引擎将不可用。')
-      return new PuppeteerManager(ctx, config, null)
+      logger.warn('[bootstrap] 配置为使用全局 `puppeteer` 服务，但该服务未启用。自动回退到内置 `puppeteer-extra` 服务。')
+      return new PuppeteerManager(ctx, config)
     }
   } else {
-    debugLogger.always('正在使用插件内置的 Puppeteer-extra 服务。')
+    logger.info('[bootstrap] 正在使用插件内置的 Puppeteer-extra 服务。')
     return new PuppeteerManager(ctx, config)
   }
 }
@@ -81,22 +81,26 @@ export function initializePuppeteerManager(ctx: Context, config: Config, debugLo
 export function initializeSearchers(
   ctx: Context,
   config: Config,
-  puppeteerManager: PuppeteerManager,
-  debugLogger: DebugLogger
+  puppeteerManager: PuppeteerManager
 ): Record<string, Searcher> {
   const allSearchers: Record<string, Searcher> = {}
 
   if (config.saucenao.apiKeys?.filter(Boolean).length > 0) {
     allSearchers.saucenao = new SauceNAO(ctx, config, config.saucenao)
   } else {
-    debugLogger.always('[saucenao] 未提供任何有效的 API Key，引擎已禁用。')
+    logger.info('[bootstrap] [saucenao] 未提供任何有效的 API Key，引擎已禁用。')
   }
 
-  allSearchers.tracemoe = new TraceMoe(ctx, config, config.tracemoe)
-  allSearchers.iqdb = new IQDB(ctx, config, config.iqdb)
-  allSearchers.yandex = new Yandex(ctx, config, config.yandex, puppeteerManager)
-  allSearchers.ascii2d = new Ascii2D(ctx, config, config.ascii2d, puppeteerManager)
-  allSearchers.soutubot = new SoutuBot(ctx, config, config.soutubot, puppeteerManager)
+  const basicSearchers = { tracemoe: TraceMoe, iqdb: IQDB }
+  const puppeteerSearchers = { yandex: Yandex, ascii2d: Ascii2D, soutubot: SoutuBot }
+
+  for (const [name, Ctor] of Object.entries(basicSearchers)) {
+    allSearchers[name] = new Ctor(ctx, config, config[name])
+  }
+
+  for (const [name, Ctor] of Object.entries(puppeteerSearchers)) {
+    allSearchers[name] = new Ctor(ctx, config, config[name], puppeteerManager)
+  }
 
   return allSearchers
 }
@@ -104,18 +108,16 @@ export function initializeSearchers(
 // 初始化所有图源增强器
 export function initializeEnhancers(
   ctx: Context,
-  config: Config,
-  debugLogger: DebugLogger
+  config: Config
 ): Record<string, Enhancer> {
-  const enhancerMetadata = createEnhancerMetadata()
   const allEnhancers: Record<string, Enhancer> = {}
 
-  for (const [name, metadata] of Object.entries(enhancerMetadata)) {
+  for (const [name, metadata] of Object.entries(ENHANCER_METADATA)) {
     if (metadata.validator(config)) {
       const subConfig = config[metadata.configKey]
       allEnhancers[name] = new metadata.constructor(ctx, config, subConfig)
     } else if (metadata.needsKeys) {
-      debugLogger.always(`[${name}] 图源未配置任何有效的${metadata.keyName}，将无法启用。`)
+      logger.info(`[bootstrap] [${name}] 图源未配置任何有效的${metadata.keyName}，将无法启用。`)
     }
   }
 

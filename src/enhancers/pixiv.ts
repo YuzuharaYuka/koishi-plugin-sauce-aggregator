@@ -32,7 +32,8 @@ interface PixivIllust {
 class PixivApiService {
   private accessToken: string | null = null;
   private readonly headers: Record<string, string>;
-  
+  private refreshPromise: Promise<boolean> | null = null;
+
   constructor(private ctx: Context, private mainConfig: Config, private subConfig: PixivConfig.Config) {
     this.headers = {
       'app-os': 'ios',
@@ -43,34 +44,42 @@ class PixivApiService {
   }
 
   // [FIX] 将普通方法改为箭头函数，以绑定 this 上下文
-  private _refreshAccessToken = async (): Promise<boolean> => {
-    const data = new URLSearchParams({
-      'grant_type': 'refresh_token',
-      'client_id': this.subConfig.clientId,
-      'client_secret': this.subConfig.clientSecret,
-      'refresh_token': this.subConfig.refreshToken,
-      'get_secure_url': 'true',
-    }).toString();
-    try {
-      const response = await this.ctx.http.post('https://oauth.secure.pixiv.net/auth/token', data, {
-        headers: { ...this.headers, 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: this.mainConfig.requestTimeout * 1000,
-      });
-      if (response.access_token) {
-        this.accessToken = response.access_token;
-        if (this.mainConfig.debug.enabled) logger.info('[pixiv] AccessToken 刷新成功。');
-        return true;
+  private async _refreshAccessToken(): Promise<boolean> {
+    if (this.refreshPromise) return this.refreshPromise;
+
+    this.refreshPromise = (async () => {
+      const data = new URLSearchParams({
+        'grant_type': 'refresh_token',
+        'client_id': this.subConfig.clientId,
+        'client_secret': this.subConfig.clientSecret,
+        'refresh_token': this.subConfig.refreshToken,
+        'get_secure_url': 'true',
+      }).toString();
+      try {
+        const response = await this.ctx.http.post('https://oauth.secure.pixiv.net/auth/token', data, {
+          headers: { ...this.headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeout: this.mainConfig.requestTimeout * 1000,
+        });
+        if (response.access_token) {
+          this.accessToken = response.access_token;
+          if (this.mainConfig.debug.enabled) logger.info('[pixiv] AccessToken 刷新成功。');
+          return true;
+        }
+        return false;
+      } catch (error) {
+        this.accessToken = null;
+        logger.error('[pixiv] 刷新 AccessToken 失败:', error.response?.data || error.message);
+        return false;
       }
-      return false;
-    } catch (error) {
-      this.accessToken = null;
-      logger.error('[pixiv] 刷新 AccessToken 失败:', error.response?.data || error.message);
-      return false;
-    }
+    })().finally(() => {
+      this.refreshPromise = null;
+    });
+
+    return this.refreshPromise;
   }
 
   // [FIX] 将普通方法改为箭头函数
-  private _request = async (url: string, params: Record<string, any>) => {
+  private async _request(url: string, params: Record<string, any>) {
     if (!this.accessToken) {
       if (!await this._refreshAccessToken()) {
         throw new Error('无法获取或刷新 Pixiv Access Token。');
@@ -85,7 +94,7 @@ class PixivApiService {
       return await makeRequest();
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || '';
-      if (error.response?.status === 400 && /invalid_grant|invalid_token/i.test(errorMsg)) {
+      if (error.response?.status === 401 || (error.response?.status === 400 && /invalid_grant|invalid_token/i.test(errorMsg))) {
         if (this.mainConfig.debug.enabled) logger.info('[pixiv] AccessToken 已失效，尝试强制刷新...');
         if (await this._refreshAccessToken()) {
           return await makeRequest();
@@ -94,9 +103,9 @@ class PixivApiService {
       throw error;
     }
   }
-  
+
   // [FIX] 将普通方法改为箭头函数
-  public getArtworkDetail = async (pid: string): Promise<PixivIllust | null> => {
+  public async getArtworkDetail(pid: string): Promise<PixivIllust | null> {
     try {
       const response = await this._request(`https://app-api.pixiv.net/v1/illust/detail`, { illust_id: pid, filter: 'for_ios' });
       return response.illust;
@@ -107,7 +116,7 @@ class PixivApiService {
   }
 
   // [FIX] 将普通方法改为箭头函数
-  public downloadImage = async (url: string): Promise<Buffer | null> => {
+  public async downloadImage(url: string): Promise<Buffer | null> {
     try {
       return await downloadWithRetry(this.ctx, url, {
           retries: this.mainConfig.enhancerRetryCount,
@@ -124,7 +133,7 @@ class PixivApiService {
 export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
   public readonly name: 'pixiv' = 'pixiv';
   private api: PixivApiService;
-  
+
   constructor(ctx: Context, mainConfig: Config, subConfig: PixivConfig.Config) {
       super(ctx, mainConfig, subConfig);
       this.api = new PixivApiService(ctx, mainConfig, subConfig);
@@ -139,7 +148,7 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
     if (!postId) return null;
 
     if (this.mainConfig.debug.enabled) logger.info(`[pixiv] 检测到 Pixiv 链接 (来自 ${pixivUrl})，帖子 ID: ${postId}，开始获取图源信息...`);
-    
+
     try {
       const illust = await this.api.getArtworkDetail(postId);
       if (!illust) {
@@ -152,13 +161,19 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
       }
 
       const isR18 = illust.x_restrict > 0;
-      if (isR18 && !this.subConfig.allowR18) {
-        if (this.mainConfig.debug.enabled) logger.info(`[pixiv] 帖子 ${postId} 是 R-18 内容，但配置不允许发送，已跳过。`);
-        return { details: [h.text(`[!] Pixiv 图源的评级为 R-18，根据设置已隐藏详情。`)] };
+      const shouldHideImages = isR18 && !this.subConfig.allowR18;
+
+      if (shouldHideImages) {
+        if (this.mainConfig.debug.enabled) logger.info(`[pixiv] 帖子 ${postId} 是 R-18 内容，但配置不允许发送图片。`);
       }
-      
+
       const details = this.buildDetailNodes(illust);
-      
+
+      if (shouldHideImages) {
+        details.push(h.text('\n[!] 图片内容为 R-18，根据设置已隐藏。'));
+        return { details };
+      }
+
       let firstImageBuffer: Buffer;
       let firstImageType: string;
       const additionalImages: h[] = [];
@@ -172,7 +187,7 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
       for (const [i, page] of imagesToFetch.entries()) {
         const qualityUrl = page.image_urls[this.subConfig.postQuality] || page.image_urls.large;
         if (!qualityUrl) continue;
-        
+
         if (this.mainConfig.debug.enabled) logger.info(`[pixiv] 正在下载图源图片 (P${i+1}, ${this.subConfig.postQuality} 质量)... URL: ${qualityUrl}`);
         const imageBuffer = await this.api.downloadImage(qualityUrl);
         const imageType = getImageTypeFromUrl(qualityUrl);
@@ -186,7 +201,7 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
             additionalImages.push(h('message', { nickname: `图源图片 P${i+1}`, avatar: botUser?.avatar }, h.image(imageBuffer, imageType)));
         }
       }
-      
+
       if (!firstImageBuffer) {
         if (this.mainConfig.debug.enabled) logger.warn(`[pixiv] 帖子 ${postId} 的主图片下载失败。`);
         return { details };
@@ -201,9 +216,9 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
 
   private findPixivUrl(result: Searcher.Result): string | null {
     const urlRegex = /(https?:\/\/(?:www\.)?pixiv\.net\/(?:en\/)?(?:artworks\/\d+|member_illust\.php\?.*illust_id=\d+)|i\.pximg\.net\/[^\s"]+)/;
-    
+
     if (result.url && urlRegex.test(result.url)) return result.url;
-    
+
     if (result.details) {
       for (const detail of result.details) {
         const match = String(detail).match(urlRegex);
@@ -234,14 +249,14 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
     info.push(`标题: ${illust.title}`);
     info.push(`作者: ${illust.user.name} (@${illust.user.account})`);
     info.push(`尺寸: ${illust.width}x${illust.height}`);
-    
+
     const postDate = new Date(illust.create_date).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
     info.push(`发布于: ${postDate}`);
 
     if (illust.x_restrict > 0) {
       info.push(`等级: R-18${illust.x_restrict === 2 ? 'G' : ''}`);
     }
-    
+
     if (illust.page_count > 1) {
         info.push(`图片数量: ${illust.page_count}`);
     }
@@ -249,7 +264,7 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
     const tags = illust.tags.map(t => t.translated_name || t.name).filter(Boolean);
     const displayedTags = tags.slice(0, 15).join(', ');
     const remainingCount = tags.length - 15;
-    
+
     let tagsText = `标签: ${displayedTags}`;
     if (remainingCount > 0) {
         tagsText += `... (及其他 ${remainingCount} 个)`;

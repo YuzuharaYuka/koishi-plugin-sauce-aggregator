@@ -19,15 +19,23 @@ function fixedHref(href: string): string {
 // 从 img 的 alt 属性中解析可能包含的属性（例如 score、tags）
 function parseImageProperties(alt: string) {
   if (!alt) return { score: undefined, tags: undefined }
-  const properties: Record<string, string> = {}
-  alt.split(' ').forEach((part, i, arr) => {
-    if (part.endsWith(':')) {
-      properties[part.slice(0, -1).toLowerCase()] = arr[i + 1]
-    }
-  })
 
-  const tags = properties.tags?.split(',').map((t) => t.trim()).filter(Boolean)
-  const score = properties.score ? parseInt(properties.score) : undefined
+  const scoreMatch = alt.match(/Score:\s*(\d+)/i)
+  const score = scoreMatch ? parseInt(scoreMatch[1]) : undefined
+
+  const tagsMatch = alt.match(/Tags:\s*(.+)$/i)
+  let tags: string[] | undefined
+
+  if (tagsMatch) {
+    const rawTags = tagsMatch[1].trim()
+    // 尝试逗号分隔，如果没有逗号则尝试空格分隔
+    if (rawTags.includes(',')) {
+      tags = rawTags.split(',').map((t) => t.trim()).filter(Boolean)
+    } else {
+      tags = rawTags.split(' ').map((t) => t.trim()).filter(Boolean)
+    }
+  }
+
   return { score, tags }
 }
 
@@ -41,8 +49,8 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
   // 主搜索方法：提交图片并返回解析结果
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
     const form = new FormData()
-    const safeBuffer = Buffer.from(options.imageBuffer)
-    form.append('file', new Blob([safeBuffer]), options.fileName)
+    // 优化：直接使用 options.imageBuffer，避免额外的 Buffer.from 拷贝
+    form.append('file', new Blob([options.imageBuffer as any]), options.fileName)
 
     const url = 'https://iqdb.org/'
     if (this.mainConfig.debug.enabled) logger.info(`[iqdb] 发送请求到 ${url}，图片大小: ${options.imageBuffer.length} 字节`)
@@ -67,6 +75,7 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
       }
 
       if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
+        logger.info(`[iqdb] Parsed JSON Response: ${JSON.stringify(results, null, 2)}`)
         logger.info({ '[iqdb] Raw HTML Response': html })
       }
 
@@ -115,32 +124,61 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
         const details: string[] = []
         const $rows = $div.find('table tr')
 
-        const matchType = $rows.eq(0).find('th').text()
+        const matchType = $rows.first().find('th').text()
         if (matchType) details.push(`匹配类型: ${matchType}`)
 
-        const sizeAndRatingText = $rows.eq(3).find('td').text()
-        const dimensionMatch = /(\d+[x×]\d+)/.exec(sizeAndRatingText)
-        if (dimensionMatch) details.push(`尺寸: ${dimensionMatch[1]}`)
-        const typeMatch = /\[(Safe|Ero|Explicit|Questionable)\]/i.exec(sizeAndRatingText)
-        if (typeMatch) details.push(`分级: ${typeMatch[1]}`)
+        let sizeAndRatingText = ''
+        let $sourceCell: any = null
+
+        $rows.each((_, row) => {
+          const $row = $(row)
+          const text = $row.text()
+
+          if (/\d+[x×]\d+/.test(text)) {
+            sizeAndRatingText = text
+          }
+
+          const hasImg = $row.find('img').length > 0
+          const isResRow = /\d+[x×]\d+/.test(text)
+          const hasLink = $row.find('a').length > 0
+          const isSimilarity = /similarity/.test(text)
+
+          if (!hasImg && !isResRow && hasLink && !isSimilarity) {
+            $sourceCell = $row.find('td')
+          }
+        })
+
+        if (sizeAndRatingText) {
+          const dimensionMatch = /(\d+[x×]\d+)/.exec(sizeAndRatingText)
+          if (dimensionMatch) details.push(`尺寸: ${dimensionMatch[1]}`)
+          const typeMatch = /\[(Safe|Ero|Explicit|Questionable)\]/i.exec(sizeAndRatingText)
+          if (typeMatch) details.push(`分级: ${typeMatch[1]}`)
+        }
 
         const altText = $div.find('.image img').attr('alt') || ''
         const props = parseImageProperties(altText)
         if (props.score) details.push(`评分: ${props.score}`)
         if (props.tags?.length > 0) details.push(`标签: ${props.tags.join(' ')}`)
 
-        const $sourceCell = $rows.eq(2).find('td')
-        const primarySource = $sourceCell.clone().children().remove().end().text().trim()
-        $sourceCell.find('a').each((_, el) => {
-          const $a = $(el)
-          details.push(`${$a.text()} 来源: ${fixedHref($a.attr('href'))}`)
-        })
+        let primarySource = '未知来源'
+        if ($sourceCell) {
+          const text = $sourceCell.clone().children().remove().end().text().trim()
+          if (text) primarySource = text
+
+          $sourceCell.find('a').each((_, el) => {
+            const $a = $(el)
+            const href = $a.attr('href')
+            if (href) {
+              details.push(`${$a.text()} 来源: ${fixedHref(href)}`)
+            }
+          })
+        }
 
         results.push({
           thumbnail: fixedHref($div.find('.image img').attr('src')),
           similarity: parseFloat(similarityMatch[1]),
           url: fixedHref(mainUrl),
-          source: primarySource || '未知来源',
+          source: primarySource,
           details,
         })
       } catch (parseError) {

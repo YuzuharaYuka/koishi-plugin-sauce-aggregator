@@ -6,7 +6,7 @@ import { Config, SearchEngineName } from './config'
 import { PuppeteerManager } from './puppeteer'
 import { DebugLogger } from './core/logger'
 
-const logger = new Logger('sauce-aggregator:lifecycle')
+const logger = new Logger('sauce-aggregator')
 
 // Puppeteer 浏览器实例初始化（仅在需要时执行）
 export async function initializePuppeteer(
@@ -23,25 +23,25 @@ export async function initializePuppeteer(
     if (needsPuppeteerForSearch) {
       try {
         await puppeteerManager.initialize()
-        debugLogger.always('浏览器实例初始化成功')
+        debugLogger.always('[lifecycle] 浏览器实例初始化成功')
       } catch (error) {
-      logger.error('初始化浏览器失败，相关引擎将不可用:', error)
+      logger.error('[lifecycle] 初始化浏览器失败，相关引擎将不可用:', error)
         const affectedEngines = config.order
           .filter(e => e.enabled && puppeteerSearchers.includes(e.engine))
           .map(e => e.engine)
           .join(', ')
-        if (affectedEngines) logger.warn(`以下引擎将被禁用: ${affectedEngines}`)
+        if (affectedEngines) logger.warn(`[lifecycle] 以下引擎将被禁用: ${affectedEngines}`)
       }
     }
   }
 }
 
 // 清理 Puppeteer 资源
-export function disposePuppeteer(puppeteerManager: PuppeteerManager): void {
+export async function disposePuppeteer(puppeteerManager: PuppeteerManager): Promise<void> {
   try {
-    puppeteerManager.dispose()
+    await puppeteerManager.dispose()
   } catch (error) {
-    logger.warn('清理 Puppeteer 资源时出错:', error)
+    logger.warn('[lifecycle] 清理 Puppeteer 资源时出错:', error)
   }
 }
 

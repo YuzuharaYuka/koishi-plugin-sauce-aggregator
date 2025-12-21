@@ -1,6 +1,7 @@
 import { Context, Logger } from 'koishi'
 import { Config } from './config'
-import puppeteer from 'puppeteer-extra'
+import { PuppeteerExtra } from 'puppeteer-extra'
+import vanillaPuppeteer from 'puppeteer-core'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import find from 'puppeteer-finder';
 import type { Browser, Page, ScreenshotOptions } from 'puppeteer-core';
@@ -8,15 +9,21 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { formatNetworkError } from './utils'
 
-const logger = new Logger('sauce-aggregator:puppeteer')
+const logger = new Logger('sauce-aggregator')
 
-const internalPuppeteer = puppeteer.use(StealthPlugin());
+const internalPuppeteer = new PuppeteerExtra(vanillaPuppeteer as any);
+internalPuppeteer.use(StealthPlugin());
+
+export interface GlobalPuppeteer {
+    browser: Browser;
+    page: () => Promise<Page>;
+    connect?: () => Promise<void>;
+}
 
 // Puppeteer 浏览器管理器，负责生命周期、并发和页面创建
 export class PuppeteerManager {
     private _browser: Browser | null = null;
     private _browserPromise: Promise<Browser> | null = null;
-    private _wsEndpoint: string | null = null;
     private ctx: Context;
     private config: Config;
     private _isInitialized = false;
@@ -26,16 +33,16 @@ export class PuppeteerManager {
     private _activePages = 0;
 
     private readonly _provider: 'internal' | 'global';
-    private readonly _globalPuppeteer: any;
+    private readonly _globalPuppeteer: GlobalPuppeteer;
 
-    constructor(ctx: Context, config: Config, globalPuppeteer?: any) {
+    constructor(ctx: Context, config: Config, globalPuppeteer?: GlobalPuppeteer) {
         this.ctx = ctx;
         this.config = config;
         this._provider = config.puppeteer.provider;
         this._globalPuppeteer = globalPuppeteer;
 
         if (this._provider === 'global' && !this._globalPuppeteer) {
-            logger.warn('PuppeteerManager in global mode but no global service provided.');
+            logger.warn('[puppeteer] PuppeteerManager in global mode but no global service provided.');
         }
     }
 
@@ -43,14 +50,14 @@ export class PuppeteerManager {
     public async initialize(): Promise<void> {
         if (this._provider === 'global' || this._isInitialized || !this.config.puppeteer.persistentBrowser) return;
 
-        logger.info('正在预初始化常驻浏览器实例...');
+        logger.info('[puppeteer] 正在预初始化常驻浏览器实例...');
         try {
             await this.ensureBrowserIsReady();
             this._isInitialized = true;
             this._scheduleRestart();
-            logger.info('常驻浏览器实例已成功预初始化。');
+            logger.info('[puppeteer] 常驻浏览器实例已成功预初始化。');
         } catch (error) {
-            logger.error('预初始化常驻浏览器实例失败:', error);
+            logger.error('[puppeteer] 预初始化常驻浏览器实例失败:', error);
         }
     }
 
@@ -58,23 +65,23 @@ export class PuppeteerManager {
     private async getBrowserPath(): Promise<string | null> {
         const customPath = this.config.puppeteer.chromeExecutablePath;
         if (customPath) {
-            if (this.config.debug.enabled) logger.info(`使用用户配置的浏览器路径: ${customPath}`);
+            if (this.config.debug.enabled) logger.info(`[puppeteer] 使用用户配置的浏览器路径: ${customPath}`);
             return customPath;
         }
 
         if (this._browserPath) {
-            if (this.config.debug.enabled) logger.info(`使用缓存的浏览器路径: ${this._browserPath}`);
+            if (this.config.debug.enabled) logger.info(`[puppeteer] 使用缓存的浏览器路径: ${this._browserPath}`);
             return this._browserPath;
         }
 
         try {
-            if (this.config.debug.enabled) logger.info('正在自动检测浏览器...');
+            if (this.config.debug.enabled) logger.info('[puppeteer] 正在自动检测浏览器...');
             const browserPath = await find();
-            logger.info(`自动检测到浏览器路径: ${browserPath}`);
+            logger.info(`[puppeteer] 自动检测到浏览器路径: ${browserPath}`);
             this._browserPath = browserPath;
             return browserPath;
         } catch (error) {
-            logger.warn('puppeteer-finder 未能找到任何浏览器:', error);
+            logger.warn('[puppeteer] puppeteer-finder 未能找到任何浏览器:', error);
             return null;
         }
     }
@@ -142,34 +149,31 @@ export class PuppeteerManager {
             return this._browserPromise;
         }
 
-        logger.info('浏览器实例不存在或已断开，正在启动或重建...');
+        logger.info('[puppeteer] 浏览器实例不存在或已断开，正在启动或重建...');
 
         this._browserPromise = (async () => {
             if (this._browser) {
-                await this.dispose().catch(err => logger.warn('在重建浏览器前，清理旧实例时出错:', err.message));
+                await this.dispose().catch(err => logger.warn('[puppeteer] 在重建浏览器前，清理旧实例时出错:', err.message));
             }
 
             try {
                 const browser = await this.launchBrowser();
-                logger.info('新的浏览器实例已成功启动。');
+                logger.info('[puppeteer] 新的浏览器实例已成功启动。');
                 this._browser = browser;
-                this._wsEndpoint = browser.wsEndpoint();
 
                 browser.on('disconnected', () => {
-                    logger.warn('浏览器实例连接已断开。');
+                    logger.warn('[puppeteer] 浏览器实例连接已断开。');
                     if (this._browser === browser) {
                         this._browser = null;
                         this._browserPromise = null;
-                        this._wsEndpoint = null;
                     }
                 });
                 this._browserPromise = null;
                 return browser;
             } catch (error) {
-                logger.error('启动浏览器实例时发生严重错误:', error.message);
+                logger.error('[puppeteer] 启动浏览器实例时发生严重错误:', error.message);
                 this._browser = null;
                 this._browserPromise = null;
-                this._wsEndpoint = null;
                 throw error;
             }
         })();
@@ -184,21 +188,21 @@ export class PuppeteerManager {
 
         const timeout = this.config.puppeteer.browserCloseTimeout * 1000;
         if (timeout <= 0) {
-            if (this.config.debug.enabled) logger.info('关闭延迟为0，立即关闭浏览器。');
+            if (this.config.debug.enabled) logger.info('[puppeteer] 关闭延迟为0，立即关闭浏览器。');
             this.dispose();
             return;
         }
 
-        if (this.config.debug.enabled) logger.info(`检测到浏览器空闲，将在 ${timeout / 1000} 秒后检查并关闭浏览器。`);
+        if (this.config.debug.enabled) logger.info(`[puppeteer] 检测到浏览器空闲，将在 ${timeout / 1000} 秒后检查并关闭浏览器。`);
 
         this._closeTimer = setTimeout(async () => {
             this._closeTimer = null;
             if (this._activePages > 0) {
-                if (this.config.debug.enabled) logger.info('空闲超时检查：检测到新的活动页面，取消本次关闭。');
+                if (this.config.debug.enabled) logger.info('[puppeteer] 空闲超时检查：检测到新的活动页面，取消本次关闭。');
                 return;
             }
 
-            if (this.config.debug.enabled) logger.info('空闲超时，正在关闭浏览器实例...');
+            if (this.config.debug.enabled) logger.info('[puppeteer] 空闲超时，正在关闭浏览器实例...');
             await this.dispose();
 
         }, timeout);
@@ -212,17 +216,17 @@ export class PuppeteerManager {
         if (this._restartTimer) clearTimeout(this._restartTimer);
 
         const intervalMs = this.config.puppeteer.restartInterval * 60 * 60 * 1000;
-        logger.info(`浏览器实例将在 ${this.config.puppeteer.restartInterval} 小时后进行下一次计划重启。`);
+        logger.info(`[puppeteer] 浏览器实例将在 ${this.config.puppeteer.restartInterval} 小时后进行下一次计划重启。`);
 
         this._restartTimer = setTimeout(() => this._performRestart(), intervalMs);
     }
 
     // 执行定时重启
     private async _performRestart(): Promise<void> {
-        logger.info('开始执行计划中的浏览器重启...');
+        logger.info('[puppeteer] 开始执行计划中的浏览器重启...');
 
         if (this._activePages > 0) {
-            logger.info('检测到浏览器正在使用中，重启将推迟 1 分钟。');
+            logger.info('[puppeteer] 检测到浏览器正在使用中，重启将推迟 1 分钟。');
             this._restartTimer = setTimeout(() => this._performRestart(), 60 * 1000);
             return;
         }
@@ -230,9 +234,9 @@ export class PuppeteerManager {
         try {
             await this.dispose();
             await this.ensureBrowserIsReady();
-            logger.info('浏览器计划性重启成功。');
+            logger.info('[puppeteer] 浏览器计划性重启成功。');
         } catch (error) {
-            logger.error('浏览器计划性重启失败:', error.message);
+            logger.error('[puppeteer] 浏览器计划性重启失败:', error.message);
         } finally {
             this._scheduleRestart();
         }
@@ -242,17 +246,24 @@ export class PuppeteerManager {
     private async getGlobalPageWithRetry(): Promise<Page> {
         if (!this._globalPuppeteer) throw new Error('全局 puppeteer 服务不可用。');
         try {
+            if (this._globalPuppeteer.browser && !this._globalPuppeteer.browser.isConnected()) {
+                throw new Error('Browser has been closed');
+            }
             return await this._globalPuppeteer.page();
         } catch (error) {
-            if (error.message.includes('连接已断开') || error.message.includes('Browser has been closed')) {
-                logger.warn('全局 Puppeteer 服务连接已断开，尝试自动恢复...');
+            if (error.message.includes('连接已断开') || error.message.includes('Browser has been closed') || error.message.includes('Session closed') || !this._globalPuppeteer.browser?.isConnected()) {
+                logger.warn('[puppeteer] 全局 Puppeteer 服务连接已断开，尝试自动恢复...');
                 try {
-                    await this._globalPuppeteer.connect();
-                    logger.info('全局 Puppeteer 服务已重新连接，将在2秒后重试获取页面...');
-                    await this.ctx.sleep(2000);
-                    return await this._globalPuppeteer.page();
+                    if (this._globalPuppeteer.connect) {
+                        await this._globalPuppeteer.connect();
+                        logger.info('[puppeteer] 全局 Puppeteer 服务已重新连接，将在2秒后重试获取页面...');
+                        await this.ctx.sleep(2000);
+                        return await this._globalPuppeteer.page();
+                    } else {
+                        throw new Error('Global puppeteer service does not support manual reconnection.');
+                    }
                 } catch (recoveryError) {
-                    logger.error('全局 Puppeteer 服务恢复失败:', recoveryError);
+                    logger.error('[puppeteer] 全局 Puppeteer 服务恢复失败:', recoveryError);
                     throw new Error(`全局浏览器服务恢复失败: ${recoveryError.message}`);
                 }
             }
@@ -264,14 +275,19 @@ export class PuppeteerManager {
     public async getPage(): Promise<Page> {
         if (this._provider === 'global') {
             const page = await this.getGlobalPageWithRetry();
-            await this.setupPage(page);
-            return page;
+            try {
+                await this.setupPage(page);
+                return page;
+            } catch (error) {
+                await page.close().catch(() => { });
+                throw error;
+            }
         }
 
         if (this._closeTimer) {
             clearTimeout(this._closeTimer);
             this._closeTimer = null;
-            if (this.config.debug.enabled) logger.info('检测到新的页面请求，已取消待处理的浏览器关闭计划。');
+            if (this.config.debug.enabled) logger.info('[puppeteer] 检测到新的页面请求，已取消待处理的浏览器关闭计划。');
         }
 
         try {
@@ -279,7 +295,16 @@ export class PuppeteerManager {
             const page = await browser.newPage();
             this._activePages++;
 
-            await this.setupPage(page);
+            try {
+                await this.setupPage(page);
+            } catch (error) {
+                await page.close().catch(() => { });
+                this._activePages--;
+                if (this._activePages === 0 && !this.config.puppeteer.persistentBrowser) {
+                    this.scheduleClose();
+                }
+                throw error;
+            }
 
             page.on('close', () => {
                 this._activePages--;
@@ -290,7 +315,7 @@ export class PuppeteerManager {
 
             return page;
         } catch (error) {
-            logger.error('获取新页面时发生严重错误:', formatNetworkError(error));
+            logger.error('[puppeteer] 获取新页面时发生严重错误:', formatNetworkError(error));
             throw error;
         }
     }
@@ -304,9 +329,9 @@ export class PuppeteerManager {
         page.on('request', (req) => {
             const resourceType = req.resourceType();
             if (['font', 'media'].includes(resourceType)) {
-                req.abort();
+                req.abort().catch(() => { });
             } else {
-                req.continue();
+                req.continue().catch(() => { });
             }
         });
     }
@@ -322,18 +347,28 @@ export class PuppeteerManager {
 
         await fs.mkdir(path.dirname(tempFilePath), { recursive: true });
         await fs.writeFile(tempFilePath, buffer);
-        if (this.config.debug.enabled) logger.info(`已创建临时文件: ${tempFilePath}`);
+        if (this.config.debug.enabled) logger.info(`[puppeteer] 已创建临时文件: ${tempFilePath}`);
 
         const cleanup = async () => {
             try {
                 await fs.unlink(tempFilePath);
-                if (this.config.debug.enabled) logger.info(`已清理临时文件: ${tempFilePath}`);
+                if (this.config.debug.enabled) logger.info(`[puppeteer] 已清理临时文件: ${tempFilePath}`);
             } catch (unlinkError) {
-                logger.warn(`清理临时文件失败 ${tempFilePath}:`, unlinkError);
+                logger.warn(`[puppeteer] 清理临时文件失败 ${tempFilePath}:`, unlinkError);
             }
         };
 
         return { filePath: tempFilePath, cleanup };
+    }
+
+    // 使用临时文件执行操作并自动清理
+    public async withTempFile<T>(buffer: Buffer, fileName: string, callback: (filePath: string) => Promise<T>): Promise<T> {
+        const { filePath, cleanup } = await this.createTempFile(buffer, fileName);
+        try {
+            return await callback(filePath);
+        } finally {
+            await cleanup();
+        }
     }
 
     // 检测页面是否为 Cloudflare 挑战页
@@ -341,7 +376,7 @@ export class PuppeteerManager {
         try {
             const title = await page.title();
             if (/Just a moment|Checking your browser/i.test(title)) {
-                if (this.config.debug.enabled) logger.info('检测到 Cloudflare 页面 (基于标题)。');
+                if (this.config.debug.enabled) logger.info('[puppeteer] 检测到 Cloudflare 页面 (基于标题)。');
                 return true;
             }
 
@@ -354,11 +389,11 @@ export class PuppeteerManager {
             ]);
 
             if (challengeElement) {
-                if (this.config.debug.enabled) logger.info('检测到 Cloudflare 页面 (基于可见文本内容)。');
+                if (this.config.debug.enabled) logger.info('[puppeteer] 检测到 Cloudflare 页面 (基于可见文本内容)。');
                 return true;
             }
         } catch (error) {
-            if (this.config.debug.enabled) logger.warn('Cloudflare 检测时发生错误:', error.message);
+            if (this.config.debug.enabled) logger.warn('[puppeteer] Cloudflare 检测时发生错误:', error.message);
         }
         return false;
     }
@@ -377,10 +412,10 @@ export class PuppeteerManager {
             const htmlContent = await page.content();
             await fs.writeFile(htmlPath, htmlContent);
 
-            logger.info(`[${contextName}] 已保存错误快照: ${screenshotPath}`);
-            logger.info(`[${contextName}] 已保存错误页面HTML: ${htmlPath}`);
+            logger.info(`[puppeteer] [${contextName}] 已保存错误快照: ${screenshotPath}`);
+            logger.info(`[puppeteer] [${contextName}] 已保存错误页面HTML: ${htmlPath}`);
         } catch (snapshotError) {
-            logger.error(`[${contextName}] 保存错误快照失败:`, snapshotError);
+            logger.error(`[puppeteer] [${contextName}] 保存错误快照失败:`, snapshotError);
         }
     }
 
@@ -391,22 +426,35 @@ export class PuppeteerManager {
         if (this._closeTimer) clearTimeout(this._closeTimer);
         if (this._restartTimer) clearTimeout(this._restartTimer);
 
+        const launchPromise = this._browserPromise;
         const browserToClose = this._browser;
+
         this._browser = null;
         this._browserPromise = null;
-        this._wsEndpoint = null;
         this._closeTimer = null;
         this._restartTimer = null;
 
+        if (launchPromise) {
+            try {
+                const browser = await launchPromise;
+                if (browser && browser.connected) {
+                    if (this.config.debug.enabled) logger.info('[puppeteer] 关闭正在启动的浏览器实例...');
+                    await browser.close();
+                }
+            } catch (error) {
+                logger.warn('[puppeteer] 关闭正在启动的浏览器实例时发生错误:', error.message);
+            }
+        }
+
         if (browserToClose) {
-            if (this.config.debug.enabled) logger.info('正在关闭浏览器实例...');
+            if (this.config.debug.enabled) logger.info('[puppeteer] 正在关闭浏览器实例...');
             try {
                 if (browserToClose.connected) {
                     await browserToClose.close();
-                    if (this.config.debug.enabled) logger.info('浏览器实例已成功关闭。');
+                    if (this.config.debug.enabled) logger.info('[puppeteer] 浏览器实例已成功关闭。');
                 }
             } catch (error) {
-                logger.warn('关闭浏览器实例时发生错误:', error.message);
+                logger.warn('[puppeteer] 关闭浏览器实例时发生错误:', error.message);
             }
         }
     }

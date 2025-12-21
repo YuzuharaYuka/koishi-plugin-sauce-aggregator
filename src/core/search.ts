@@ -1,6 +1,6 @@
 // --- 搜索处理模块 ---
 
-import { Context, h, Logger, Session } from 'koishi'
+import { Context, h, Logger, Session, Universal } from 'koishi'
 import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer, EnhancedResult } from '../config'
 import { SEARCH_ENGINES, ENHANCER_PATTERNS, ENHANCEMENT_ID_EXTRACTORS, SPECIAL_ENGINES, SEARCH_FILTERS, SEARCH_MESSAGES, MESSAGE_TITLES } from '../constants'
 import * as MessageBuilder from './builder'
@@ -103,7 +103,7 @@ export class SearchHandler {
     }
   }
 
-  private async handleAttachEngines(attachOutputs: SearchOutput[], botUser: any, session: Session): Promise<void> {
+  private async handleAttachEngines(attachOutputs: SearchOutput[], botUser: Universal.User, session: Session): Promise<void> {
     const successfulAttachOutputs = attachOutputs.filter((o) => o.results.length > 0)
     if (successfulAttachOutputs.length === 0) return
 
@@ -156,7 +156,7 @@ export class SearchHandler {
     isSingleEngineSearch: boolean,
     isAllSearch: boolean,
     options: SearchOptions,
-    botUser: any,
+    botUser: Universal.User,
     session: Session,
     collectedErrors: string[],
     sortedEnhancers: Enhancer[]
@@ -192,7 +192,10 @@ export class SearchHandler {
       if (high.length > 0) {
         highConfidenceGroups.push({ engine: output.engine, results: high })
       } else if (low.length > 0) {
-        lowConfidenceGroups.push({ engine: output.engine, results: low.slice(0, this.config.maxResults) })
+        const lowResults = low.slice(0, this.config.maxResults)
+        if (lowResults.length > 0) {
+          lowConfidenceGroups.push({ engine: output.engine, results: lowResults })
+        }
       }
     }
 
@@ -205,12 +208,15 @@ export class SearchHandler {
       mainResultsFound = true
       await session.send(SEARCH_MESSAGES.SEARCH_COMPLETE)
       for (const group of highConfidenceGroups) {
-        let resultsToShow =
-          isSingleEngineSearch || this.config.search.parallelHighConfidenceStrategy === 'all' || isAllSearch
-            ? group.results
-            : [group.results[0]]
-        if (group.engine === 'soutubot') {
-          resultsToShow = resultsToShow.slice(0, this.config.soutubot.maxHighConfidenceResults)
+        const engineSpecificConfig = this.config[group.engine] as { maxHighConfidenceResults?: number }
+        const maxHighResults = engineSpecificConfig?.maxHighConfidenceResults ?? 1
+
+        let resultsToShow: SearcherResult.Result[]
+
+        if (isSingleEngineSearch || this.config.search.parallelHighConfidenceStrategy === 'all' || isAllSearch) {
+          resultsToShow = group.results
+        } else {
+          resultsToShow = group.results.slice(0, maxHighResults)
         }
 
         for (const result of resultsToShow) {
@@ -253,7 +259,7 @@ export class SearchHandler {
 
     await this.handleAttachEngines(finalAttachOutputs, botUser, session)
 
-    if (!mainResultsFound && finalAttachOutputs.every((o) => o.results.length === 0)) {
+    if (!mainResultsFound && (finalAttachOutputs.every((o) => o.results.length === 0) || this.config.maxResults === 0)) {
       let finalMessage: string
       if (isSingleEngineSearch) {
         const engineName = mainSearchers[0].name
@@ -471,6 +477,8 @@ export class SearchHandler {
           )
           await MessageBuilder.sendFigureMessage(session, figureMessage, SEARCH_MESSAGES.FORWARD_FAILED)
         } else {
+          if (this.config.search.parallelHighConfidenceStrategy === 'first' && highConfidenceSent) return
+
           highConfidenceSent = true
           await session.send(`[${output.engine}] ${SEARCH_MESSAGES.SEARCH_COMPLETE}`)
           const figureMessage = h('figure')
@@ -532,7 +540,7 @@ export class SearchHandler {
         return !(wasAborted && (o.engine === SPECIAL_ENGINES.YANDEX || o.engine === SPECIAL_ENGINES.ASCII2D))
       })
 
-      if (finalLowConfidence.length > 0) {
+      if (finalLowConfidence.length > 0 && this.config.maxResults > 0) {
         await session.send(SEARCH_MESSAGES.NO_HIGH_CONFIDENCE)
         const figureMessage = h('figure')
         const nodePromises = finalLowConfidence.flatMap((output) =>
@@ -545,7 +553,7 @@ export class SearchHandler {
       }
     }
 
-    if (!highConfidenceSent && lowConfidenceOutputs.length === 0) {
+    if (!highConfidenceSent && (lowConfidenceOutputs.length === 0 || this.config.maxResults === 0)) {
       let finalMessage = SEARCH_MESSAGES.NO_RESULTS
       if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
       await session.send(finalMessage)

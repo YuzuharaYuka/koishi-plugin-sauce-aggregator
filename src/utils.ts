@@ -3,7 +3,7 @@ import { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, encodePN
 import { Readable, PassThrough } from 'stream';
 import { Context, Logger, h } from 'koishi';
 
-const logger = new Logger('sauce-aggregator:utils');
+const logger = new Logger('sauce-aggregator');
 
 // 图片源接口定义
 interface ImageSource {
@@ -94,13 +94,13 @@ export async function downloadWithRetry(
       lastError = error instanceof Error ? error : new Error(String(error))
       if (i < options.retries) {
         logger.warn(
-          `[下载器] 下载失败 ${url} (尝试 ${i + 1}/${options.retries + 1}): ${lastError.message}，2秒后重试...`
+          `[utils] [下载器] 下载失败 ${url} (尝试 ${i + 1}/${options.retries + 1}): ${lastError.message}，2秒后重试...`
         )
         await ctx.sleep(2000)
       }
     }
   }
-  logger.warn(`[下载器] 下载 ${url} 失败 (${options.retries + 1}次尝试)。`)
+  logger.warn(`[utils] [下载器] 下载 ${url} 失败 (${options.retries + 1}次尝试)。`)
   throw lastError
 }
 
@@ -144,7 +144,7 @@ export function detectImageType(buffer: Buffer): 'jpeg' | 'png' | null {
 // 预处理图片压缩
 export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<Buffer> {
   if (!Buffer.isBuffer(buffer)) {
-    logger.error('传入的不是有效的 Buffer 对象')
+    logger.error('[utils] 传入的不是有效的 Buffer 对象')
     return buffer
   }
 
@@ -152,13 +152,13 @@ export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<
   if (buffer.length <= maxSizeInMB * ONE_MB) return buffer
 
   logger.info(
-    `图片体积 (${(buffer.length / ONE_MB).toFixed(2)}MB) 超出 ${maxSizeInMB}MB，正在压缩...`
+    `[utils] 图片体积 (${(buffer.length / ONE_MB).toFixed(2)}MB) 超出 ${maxSizeInMB}MB，正在压缩...`
   )
 
   try {
     const imageType = detectImageType(buffer)
     if (!imageType) {
-      logger.warn('不支持的图片格式，无法压缩，将使用原图。')
+      logger.warn('[utils] 不支持的图片格式，无法压缩，将使用原图。')
       return buffer
     }
 
@@ -192,7 +192,7 @@ export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<
       newHeight
     )
 
-    const finalBuffer = await new Promise<Buffer>((resolve, reject) => {
+    const processPromise = new Promise<Buffer>((resolve, reject) => {
       const chunks: Buffer[] = []
       const passThrough = new PassThrough()
 
@@ -210,10 +210,17 @@ export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<
       Promise.resolve(encodeStream).catch(reject)
     })
 
-    logger.info(`图片压缩完成，新体积: ${(finalBuffer.length / ONE_MB).toFixed(2)}MB`)
+    // 添加 15 秒超时保护
+    const timeoutPromise = new Promise<Buffer>((_, reject) =>
+      setTimeout(() => reject(new Error('图片压缩处理超时')), 15000)
+    )
+
+    const finalBuffer = await Promise.race([processPromise, timeoutPromise])
+
+    logger.info(`[utils] 图片压缩完成，新体积: ${(finalBuffer.length / ONE_MB).toFixed(2)}MB`)
     return finalBuffer
   } catch (error) {
-    logger.error('图片压缩失败:', error)
+    logger.error('[utils] 图片压缩失败:', error)
     return buffer
   }
 }
@@ -276,10 +283,23 @@ export function getImageUrlAndName(
     return { url: null, name: null }
   }
 
-  const rawName =
-    (imgElement?.attrs?.file ? String(imgElement.attrs.file) : url.split('/').pop()?.split('?')[0]) ||
-    'image.jpg'
-  const name = rawName.replace(/[\r\n"']+/g, '')
+  let rawName = imgElement?.attrs?.file ? String(imgElement.attrs.file) : ''
+
+  if (!rawName && url) {
+    try {
+      // 尝试从 URL 路径中提取文件名，忽略查询参数
+      const urlObj = new URL(url)
+      const segments = urlObj.pathname.split('/').filter(Boolean)
+      if (segments.length > 0) {
+        rawName = segments[segments.length - 1]
+      }
+    } catch {
+      // URL 解析失败时的回退处理
+      rawName = url.split('/').pop()?.split('?')[0] || ''
+    }
+  }
+
+  const name = (rawName || 'image.jpg').replace(/[\r\n"']+/g, '')
 
   return { url, name }
 }

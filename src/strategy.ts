@@ -7,20 +7,36 @@ import { SEARCH_FILTERS } from './constants'
 import { SearchHandler } from './core/search'
 import { CommandHandler } from './core/command'
 
-// 选择并执行搜索策略：根据参数和配置决定搜索模式
-export async function selectSearchStrategy(
-  isSingleEngineSpecified: boolean,
-  searchOptions: SearchOptions,
-  searchHandler: SearchHandler,
-  commandHandler: CommandHandler,
-  allEnabledSearchers: Searcher[],
-  searchersToUse: Searcher[],
-  options: Record<string, any>,
-  config: Config,
-  botUser: any,
-  session: Session,
+export interface SearchContext {
+  isSingleEngineSpecified: boolean
+  searchOptions: SearchOptions
+  searchHandler: SearchHandler
+  commandHandler: CommandHandler
+  allEnabledSearchers: Searcher[]
+  searchersToUse: Searcher[]
+  options: Record<string, any>
+  config: Config
+  botUser: any
+  session: Session
   sortedEnhancers: Enhancer[]
-): Promise<string | void> {
+}
+
+// 选择并执行搜索策略：根据参数和配置决定搜索模式
+export async function selectSearchStrategy(ctx: SearchContext): Promise<string | void> {
+  const {
+    isSingleEngineSpecified,
+    searchOptions,
+    searchHandler,
+    commandHandler,
+    allEnabledSearchers,
+    searchersToUse,
+    options,
+    config,
+    botUser,
+    session,
+    sortedEnhancers
+  } = ctx
+
   const collectedErrors: string[] = []
   const isDirect = isSingleEngineSpecified || options.all
 

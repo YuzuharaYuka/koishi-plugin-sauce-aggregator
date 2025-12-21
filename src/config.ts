@@ -173,6 +173,7 @@ const puppeteerConfig = Schema.object({
 })
 
 export const Config: Schema<Config> = Schema.intersect([
+  // ==================== 基础设置 ====================
   Schema.object({
     order: Schema.array(Schema.object({
       engine: Schema.union(['saucenao', 'iqdb', 'tracemoe', 'soutubot', 'yandex', 'ascii2d']).description('搜图引擎'),
@@ -197,6 +198,7 @@ export const Config: Schema<Config> = Schema.intersect([
       .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按顺序尝试获取更详细信息。'),
   }).description('基础设置'),
 
+  // ==================== 搜索设置 ====================
   Schema.object({
     search: Schema.object({
       mode: Schema.union([
@@ -214,16 +216,17 @@ export const Config: Schema<Config> = Schema.intersect([
           '并行模式下的高匹配度结果策略'
       )
     }),
-    confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值 (%)。当引擎未设置独立阈值时，将使用此值。'),
-    maxResults: Schema.number().default(2).min(1).max(10).description('低匹配度结果的最大显示数量。当没有找到高匹配度结果时，每个引擎最多显示的结果数。'),
-    promptTimeout: Schema.number().default(60).min(10).description('发送图片超时 (秒)。使用 `sauce` 指令后等待用户发送图片的超时时间。'),
-    requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)。适用于所有搜图引擎和图源。'),
-    enhancerRetryCount: Schema.number().min(0).max(5).default(1).description('图源下载重试次数。当从图源网站下载图片失败时，额外尝试的次数。'),
+    confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值 (%)'),
+    maxResults: Schema.number().default(2).min(0).max(10).description('低匹配度结果的最大显示数量 (0 表示不显示)'),
+    promptTimeout: Schema.number().default(60).min(10).description('发送图片超时 (秒)'),
+    requestTimeout: Schema.number().default(30).min(5).description('全局网络请求超时 (秒)'),
+    enhancerRetryCount: Schema.number().min(0).max(5).default(1).description('图源下载重试次数'),
     prependLinkParsingMiddleware: Schema.boolean().default(false).description('**启用前置中间件模式**<br>' +
     '开启后，本插件将优先处理消息中的图源链接。<br>' +
     '**注意**：这可能会阻止其他相同链接解析插件生效，请按需开启。'),
   }).description('搜索设置'),
 
+  // ==================== 网络与浏览器 ====================
   Schema.object({
     proxy: Schema.string().default('http://127.0.0.1:7890').description(
       '**独立代理配置**：如`http://127.0.0.1:7890`<br>' +
@@ -233,52 +236,52 @@ export const Config: Schema<Config> = Schema.intersect([
     puppeteer: puppeteerConfig,
   }).description('网络与浏览器'),
 
+  // ==================== 引擎配置 ====================
   Schema.object({
     saucenao: Schema.object({
       apiKeys: Schema.array(Schema.string().role('secret')).description('SauceNAO 的 API Key 列表。<br>' +
         '注册登录 **[SauceNAO](https://saucenao.com/user.php)**，'+
         '在底部选项 [Account](https://saucenao.com/user.php?page=account-overview) -> '+
         '[api](https://saucenao.com/user.php?page=search-api) -> \`api key\`处生成。'),
-      confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+      confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)'),
     }).description('SauceNAO 设置'),
     tracemoe: Schema.object({
-      sendVideoPreview: Schema.boolean().default(true).description('发送视频预览。当\`Trace.moe\` 找到高匹配度结果时，是否发送预览视频。'),
-      confidenceThreshold: Schema.number().min(0).max(100).default(90).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+      sendVideoPreview: Schema.boolean().default(true).description('发送视频预览'),
+      confidenceThreshold: Schema.number().min(0).max(100).default(90).description('独立高匹配度阈值 (%)'),
     }).description('Trace.moe 设置'),
     iqdb: Schema.object({
-      confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
+      confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)'),
     }).description('IQDB 设置'),
     soutubot: Schema.object({
-      confidenceThreshold: Schema.number().min(0).max(100).default(65).description('独立高匹配度阈值 (%)。如果设置为 0，将使用全局阈值。'),
-      maxHighConfidenceResults: Schema.number().min(1).max(10).default(3).description('高匹配度结果的最大显示数量。用于展示多个不同版本（如语言）的匹配结果。'),
+      confidenceThreshold: Schema.number().min(0).max(100).default(65).description('独立高匹配度阈值 (%)'),
+      maxHighConfidenceResults: Schema.number().min(1).max(10).default(3).description('高匹配度结果的最大显示数量'),
     }).description('搜图bot酱 设置'),
     yandex: Schema.object({
-      alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Yandex\`结果。<br>' +
-        '在并行模式下，此结果将作为独立消息稍后发送。'),
+      alwaysAttach: Schema.boolean().default(false).description('总是附加\`Yandex\`结果'),
       domain: Schema.union([
         Schema.const('ya.ru').description('ya.ru (推荐)'),
         Schema.const('yandex.com').description('yandex.com (锁区)'),
-      ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名。如果遇到访问问题或搜索无结果，可以尝试切换。'),
+      ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名'),
     }).description('Yandex 设置'),
     ascii2d: Schema.object({
-        alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果。开启后，即使其他引擎找到高匹配度结果，也会附带\`Ascii2D\`结果。<br>' +
-          '在并行模式下，此结果将作为独立消息稍后发送。'),
+        alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果'),
     }).description('Ascii2D 设置'),
   }).description('引擎配置'),
 
+  // ==================== 图源配置 ====================
   Schema.object({
     yandere: Schema.object({
       postQuality: Schema.union([
         Schema.const('original').description('原图'),
         Schema.const('jpeg').description('中等图'),
         Schema.const('sample').description('预览图'),
-      ]).default('jpeg').description('图片质量。从\`Yande.re\`获取的图片尺寸。'),
+      ]).default('jpeg').description('图片质量'),
       maxRating: Schema.union([
           Schema.const('s').description('安全'),
           Schema.const('q').description('可疑'),
           Schema.const('e').description('露骨'),
-      ]).default('s').description('允许的最高内容评级。'),
-      enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Yande.re\` 帖子链接时，自动获取并发送图源详情。'),
+      ]).default('s').description('允许的最高内容评级'),
+      enableLinkParsing: Schema.boolean().default(false).description('启用链接解析'),
     }).description('Yande.re 图源设置'),
     gelbooru: Schema.object({
       keyPairs: Schema.array(Schema.object({
@@ -293,14 +296,14 @@ export const Config: Schema<Config> = Schema.intersect([
           Schema.const('original').description('原图'),
           Schema.const('sample').description('样本图'),
           Schema.const('preview').description('缩略图'),
-      ]).default('sample').description('图片质量。从\`Gelbooru\`获取的图片尺寸。'),
+      ]).default('sample').description('图片质量'),
       maxRating: Schema.union([
           Schema.const('general').description('通用'),
           Schema.const('sensitive').description('敏感'),
           Schema.const('questionable').description('可疑'),
           Schema.const('explicit').description('露骨'),
-      ]).default('general').description('允许的最高内容评级。'),
-      enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Gelbooru\` 帖子链接时，自动获取并发送图源详情。'),
+      ]).default('general').description('允许的最高内容评级'),
+      enableLinkParsing: Schema.boolean().default(false).description('启用链接解析'),
     }).description('Gelbooru 图源设置'),
     danbooru: Schema.object({
         keyPairs: Schema.array(Schema.object({
@@ -313,14 +316,14 @@ export const Config: Schema<Config> = Schema.intersect([
             Schema.const('original').description('原图'),
             Schema.const('sample').description('样本图'),
             Schema.const('preview').description('缩略图'),
-        ]).default('sample').description('图片质量。从\`Danbooru\`获取的图片尺寸。'),
+        ]).default('sample').description('图片质量'),
         maxRating: Schema.union([
             Schema.const('general').description('通用'),
             Schema.const('sensitive').description('敏感'),
             Schema.const('questionable').description('可疑'),
             Schema.const('explicit').description('露骨'),
-        ]).default('general').description('允许的最高内容评级。'),
-        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Danbooru\` 帖子链接时，自动获取并发送图源详情。'),
+        ]).default('general').description('允许的最高内容评级'),
+        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析'),
     }).description('Danbooru 图源设置'),
     pixiv: Schema.object({
         refreshToken: Schema.string().role('secret').description('Pixiv API Refresh Token. <br>' +
@@ -329,22 +332,23 @@ export const Config: Schema<Config> = Schema.intersect([
             Schema.const('original').description('原图'),
             Schema.const('large').description('大图'),
             Schema.const('medium').description('中等图'),
-        ]).default('large').description('图片质量。从\`Pixiv\`获取的图片尺寸。'),
-        allowR18: Schema.boolean().default(false).description('是否允许发送 R-18/R-18G 内容。'),
-        clientId: Schema.string().role('secret').description('Pixiv API Client ID.').default('MOBrBDS8blbauoSck0ZfDbtuzpyT'),
-        clientSecret: Schema.string().role('secret').description('Pixiv API Client Secret.').default('lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj'),
-        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析。当用户发送 \`Pixiv\` 作品链接时，自动获取并发送图源详情。'),
-        maxImagesInPost: Schema.number().min(0).max(50).default(3).description('多图作品最大发送数量。解析包含多张图片的作品时，最多发送的图片数量。设置为 0 则无限制。'),
+        ]).default('large').description('图片质量'),
+        allowR18: Schema.boolean().default(false).description('是否允许发送 R-18/R-18G 内容'),
+        clientId: Schema.string().role('secret').description('Pixiv API Client ID').default('MOBrBDS8blbauoSck0ZfDbtuzpyT'),
+        clientSecret: Schema.string().role('secret').description('Pixiv API Client Secret').default('lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj'),
+        enableLinkParsing: Schema.boolean().default(false).description('启用链接解析'),
+        maxImagesInPost: Schema.number().min(0).max(50).default(3).description('多图作品最大发送数量'),
     }).description('Pixiv 图源设置'),
   }).description('图源配置'),
 
+  // ==================== 调试设置 ====================
   Schema.object({
     debug: Schema.object({
-      enabled: Schema.boolean().default(false).description('启用调试模式。将在控制台输出详细的执行日志。'),
+      enabled: Schema.boolean().default(false).description('启用调试模式'),
       logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru', 'pixiv']))
         .role('checkbox')
         .default([])
-        .description('记录原始响应: 选择要将 API 或页面 HTML 的原始返回信息输出到日志的引擎/图源 (可能产生大量日志，仅用于问题诊断)。'),
+        .description('记录原始响应'),
     }),
   }).description('调试设置'),
 ])

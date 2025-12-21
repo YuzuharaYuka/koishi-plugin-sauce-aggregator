@@ -12,6 +12,23 @@ export class Yandex extends Searcher<YandexConfig.Config> {
     public readonly name: SearchEngineName = 'yandex'
     private puppeteer: PuppeteerManager
 
+    private static readonly SELECTORS = {
+        COOKIE_POPUPS: [
+            { selector: '#gdpr-popup-v3-button-all', name: 'GDPR v3' },
+            { selector: 'button[data-testid="button-allow-all"]', name: 'Yandex cookies' },
+        ],
+        UPLOAD_BUTTON_NEW: '.Image-Uploader, button.Button2_view_action',
+        UPLOAD_BUTTON_OLD: '.HeaderDesktopActions-CbirButton',
+        OLD_UI_POPUP: '.CbirPanel-Popup',
+        OLD_UI_FILE_BTN: '.CbirPanel-FileControlsButton',
+        RESULTS_CONTAINER: '.CbirSites-Item, .CbirSimilar-Thumb',
+        RESULT_ITEMS: '.CbirSites-Item, .CbirSimilar-Item',
+        RESULT_THUMB: 'img',
+        RESULT_TITLE: '.CbirSites-ItemTitle a, .CbirSimilar-Title',
+        RESULT_DOMAIN: '.CbirSites-ItemDomain, .CbirSimilar-Domain',
+        RESULT_SIZE: '.Thumb-Mark',
+    }
+
     constructor(ctx: Context, mainConfig: Config, subConfig: YandexConfig.Config, puppeteerManager: PuppeteerManager) {
         super(ctx, mainConfig, subConfig)
         this.puppeteer = puppeteerManager
@@ -45,7 +62,7 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
             if (this.mainConfig.debug.enabled) logger.info('[yandex] 文件已提交，等待结果页面加载')
 
-            await page.waitForSelector('.CbirSites-Item, .CbirSimilar-Thumb', { timeout: this.mainConfig.requestTimeout * 1000 })
+            await page.waitForSelector(Yandex.SELECTORS.RESULTS_CONTAINER, { timeout: this.mainConfig.requestTimeout * 1000 })
             if (this.mainConfig.debug.enabled) logger.info('[yandex] 结果已加载，开始解析')
 
             const results = await this._parseResults(page, options.maxResults)
@@ -80,20 +97,21 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
     // 检测并点击常见的 Cookie 接受弹窗
     private async handleCookiePopups(page: Page): Promise<void> {
-        const cookiePopups = [
-            { selector: '#gdpr-popup-v3-button-all', name: 'GDPR v3' },
-            { selector: 'button[data-testid="button-allow-all"]', name: 'Yandex cookies' },
-        ]
+        const cookiePopups = Yandex.SELECTORS.COOKIE_POPUPS
 
         if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检查 ${cookiePopups.length} 种 Cookie 弹窗`)
+
+        // 使用较短的超时时间 (3s)，避免无弹窗时长时间等待
+        const popupTimeout = 3000
 
         const detectionPromises = cookiePopups.map((popup) =>
             (async () => {
                 try {
-                    await page.waitForSelector(popup.selector, { visible: true, timeout: 3000 })
+                    await page.waitForSelector(popup.selector, { visible: true, timeout: popupTimeout })
                     if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检测到 '${popup.name}'，尝试点击接受`)
                     await page.click(popup.selector)
-                    await page.waitForSelector(popup.selector, { hidden: true, timeout: 2000 })
+                    // 点击后等待消失，也使用较短超时
+                    await page.waitForSelector(popup.selector, { hidden: true, timeout: popupTimeout })
                 } catch (e) {
                     // 未检测到此弹窗：忽略
                 }
@@ -106,15 +124,18 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
     // 根据不同 UI 布局尝试上传图片
     private async tryUploadImage(page: Page, filePath: string): Promise<boolean> {
-        const newUiButtonSelector = '.Image-Uploader, button.Button2_view_action'
-        const oldUiButtonSelector = '.HeaderDesktopActions-CbirButton'
+        const newUiButtonSelector = Yandex.SELECTORS.UPLOAD_BUTTON_NEW
+        const oldUiButtonSelector = Yandex.SELECTORS.UPLOAD_BUTTON_OLD
+
+        // 给上传按钮检测更多时间 (10s 或配置值的一半)
+        const uploadTimeout = Math.max(10000, this.mainConfig.requestTimeout * 500)
 
         if (this.mainConfig.debug.enabled) logger.info('[yandex] 检测页面上传入口')
 
         try {
             const raceResult = await Promise.race([
-                page.waitForSelector(newUiButtonSelector, { visible: true, timeout: 5000 }).then(() => 'new'),
-                page.waitForSelector(oldUiButtonSelector, { visible: true, timeout: 5000 }).then(() => 'old'),
+                page.waitForSelector(newUiButtonSelector, { visible: true, timeout: uploadTimeout }).then(() => 'new'),
+                page.waitForSelector(oldUiButtonSelector, { visible: true, timeout: uploadTimeout }).then(() => 'old'),
             ])
 
             if (raceResult === 'new') {
@@ -129,10 +150,10 @@ export class Yandex extends Searcher<YandexConfig.Config> {
             } else if (raceResult === 'old') {
                 if (this.mainConfig.debug.enabled) logger.info('[yandex] 使用旧版 UI 上传')
                 await page.click(oldUiButtonSelector)
-                await page.waitForSelector('.CbirPanel-Popup', { visible: true, timeout: 5000 })
+                await page.waitForSelector(Yandex.SELECTORS.OLD_UI_POPUP, { visible: true, timeout: 5000 })
                 const [fileChooser] = await Promise.all([
                     page.waitForFileChooser({ timeout: 10000 }),
-                    page.click('.CbirPanel-FileControlsButton'),
+                    page.click(Yandex.SELECTORS.OLD_UI_FILE_BTN),
                 ])
                 await fileChooser.accept([filePath])
                 if (this.mainConfig.debug.enabled) logger.info('[yandex] 旧版上传成功')
@@ -148,23 +169,28 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
     // 从结果页 DOM 中解析搜索结果
     private async _parseResults(page: Page, maxResults: number): Promise<Searcher.Result[]> {
-        const resultsSelector = '.CbirSites-Item, .CbirSimilar-Item'
+        const resultsSelector = Yandex.SELECTORS.RESULT_ITEMS
         await page.waitForSelector(resultsSelector, { timeout: 5000 })
 
         return page.$$eval(
             resultsSelector,
-            (items, max) => {
+            (items, max, selectors) => {
                 const parsedResults: any[] = []
                 for (const item of items.slice(0, max)) {
-                    const thumbElement = item.querySelector('img') as HTMLImageElement
-                    const titleElement = item.querySelector('.CbirSites-ItemTitle a, .CbirSimilar-Title') as HTMLAnchorElement
-                    const domainElement = item.querySelector('.CbirSites-ItemDomain, .CbirSimilar-Domain') as HTMLAnchorElement
-                    const sizeElement = item.querySelector('.Thumb-Mark')
+                    const thumbElement = item.querySelector(selectors.RESULT_THUMB) as HTMLImageElement
+                    const titleElement = item.querySelector(selectors.RESULT_TITLE) as HTMLAnchorElement
+                    const domainElement = item.querySelector(selectors.RESULT_DOMAIN) as HTMLAnchorElement
+                    const sizeElement = item.querySelector(selectors.RESULT_SIZE)
 
                     if (!thumbElement || !titleElement) continue
 
                     let thumbnailUrl = thumbElement.src
-                    if (thumbnailUrl && thumbnailUrl.startsWith('//')) thumbnailUrl = 'https:' + thumbnailUrl
+                    // 使用 URL 构造函数处理相对路径，确保 URL 完整
+                    try {
+                        thumbnailUrl = new URL(thumbnailUrl, document.baseURI).href
+                    } catch (e) {
+                        // 保持原样
+                    }
 
                     const details: string[] = []
                     if (sizeElement) details.push(`尺寸: ${sizeElement.textContent.trim()}`)
@@ -182,7 +208,8 @@ export class Yandex extends Searcher<YandexConfig.Config> {
                 }
                 return parsedResults
             },
-            maxResults
+            maxResults,
+            Yandex.SELECTORS // 传递选择器到浏览器上下文
         )
     }
 }

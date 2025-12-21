@@ -1,11 +1,11 @@
 // --- 消息构建模块 ---
 
-import { Context, h, Logger } from 'koishi'
+import { Context, h, Logger, Universal } from 'koishi'
 import { Config, EnhancedResult, SearchEngineName, Searcher as SearcherResult } from '../config'
 import { ENHANCER_LABELS, MESSAGE_TITLES, SPECIAL_ENGINES } from '../constants'
-import { getImageTypeFromUrl } from '../utils'
+import { getImageTypeFromUrl, downloadWithRetry } from '../utils'
 
-const logger = new Logger('sauce-aggregator:message-builder')
+const logger = new Logger('sauce-aggregator')
 
 // 高阶函数：非空过滤和映射 (遵循准则6 - 简化消息构建)
 function filterMap<T, R>(array: (T | null | undefined)[], fn: (val: T) => R): R[] {
@@ -36,11 +36,14 @@ export async function createResultContent(
   const textNode = h.text('\n' + textFields.join('\n'))
 
   try {
-    const imageBuffer = Buffer.from(await ctx.http.get(result.thumbnail, { responseType: 'arraybuffer' }))
+    const imageBuffer = await downloadWithRetry(ctx, result.thumbnail, {
+      retries: 1,
+      timeout: 10000,
+    })
     const imageType = getImageTypeFromUrl(result.thumbnail)
     return [h.image(imageBuffer, imageType), textNode]
   } catch (e) {
-    logger.warn(`缩略图下载失败 ${result.thumbnail}:`, (e as any).message)
+    logger.warn(`[builder] 缩略图下载失败 ${result.thumbnail}:`, (e as any).message)
     return [h('p', '[!] 缩略图加载失败'), textNode]
   }
 }
@@ -50,7 +53,7 @@ export async function buildLowConfidenceNode(
   ctx: Context,
   result: SearcherResult.Result,
   engineName: SearchEngineName,
-  botUser: any
+  botUser: Universal.User
 ) {
   const content = await createResultContent(ctx, result, engineName)
   return h(
@@ -70,7 +73,7 @@ export async function buildHighConfidenceMessage(
   config: Config,
   result: SearcherResult.Result,
   engineName: SearchEngineName,
-  botUser: any,
+  botUser: Universal.User,
   enhancedData?: EnhancedResult
 ) {
   if (result.coverImage) {
@@ -85,13 +88,13 @@ export async function buildHighConfidenceMessage(
 
   if (engineName === SPECIAL_ENGINES.TRACEMOE && config.tracemoe.sendVideoPreview && result.url) {
     try {
-      if (config.debug.enabled) logger.info(`[${SPECIAL_ENGINES.TRACEMOE}] 正在为高置信度结果下载视频预览...`)
+      if (config.debug.enabled) logger.info(`[builder] [${SPECIAL_ENGINES.TRACEMOE}] 正在为高置信度结果下载视频预览...`)
       const videoPreview = await ctx.http.get(result.url, { responseType: 'arraybuffer' })
       figureMessage.children.push(
         h('message', { nickname: MESSAGE_TITLES.VIDEO_PREVIEW, avatar: botUser.avatar }, h.video(videoPreview, 'video/mp4'))
       )
     } catch (e) {
-      logger.warn(`[${SPECIAL_ENGINES.TRACEMOE}] 高置信度视频预览下载失败: ${(e as any).message}`)
+      logger.warn(`[builder] [${SPECIAL_ENGINES.TRACEMOE}] 高置信度视频预览下载失败: ${(e as any).message}`)
     }
   }
 

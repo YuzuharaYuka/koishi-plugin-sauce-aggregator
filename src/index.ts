@@ -37,7 +37,7 @@ export const usage = `
 *	**[saucenao](https://saucenao.com/) (s)** : 识别动漫、插画和漫画图片等。
 *	**[iqdb](https://www.iqdb.org/) (i)** : 从多个图源网站识别动漫、漫画、游戏图片和壁纸。
 *	**[tracemoe](https://trace.moe/) (t)** : 识别番剧截图，提供番剧信息、集数、时间轴与视频预览。
-*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，使用完整或局部图识别nh或eh本子，下载可使用[nhentai-downloader](/market?keyword=nhentai-downloader)插件。
+*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，使用完整或局部图识别nh或eh本子，下载nh本子可使用[nhentai-downloader](/market?keyword=nhentai-downloader)插件。
 *	**[ascii2d](https://ascii2d.net/) (a)** : 二次元画像詳細検索，作为补充结果。
 *	**[yandex](https://ya.ru/) (y)** : 识别网络媒体或网站中存在的特征相似图片并返回来源，主要作为补充结果。
 
@@ -61,8 +61,8 @@ export function apply(ctx: Context, config: Config) {
 
   // 初始化核心组件
   const puppeteerManager = initializePuppeteerManager(ctx, config, debugLogger)
-  const allSearchers = initializeSearchers(ctx, config, puppeteerManager, debugLogger)
-  const allEnhancers = initializeEnhancers(ctx, config, debugLogger)
+  const allSearchers = initializeSearchers(ctx, config, puppeteerManager)
+  const allEnhancers = initializeEnhancers(ctx, config)
 
   // 获取已启用的引擎和增强器
   const allEnabledSearchers = config.order
@@ -125,7 +125,7 @@ export function apply(ctx: Context, config: Config) {
           return SEARCH_MESSAGES.IMAGE_PROCESS_FAILED
         }
         const botUser = await session.bot.getSelf()
-        return await selectSearchStrategy(
+        return await selectSearchStrategy({
           isSingleEngineSpecified,
           searchOptions,
           searchHandler,
@@ -137,7 +137,7 @@ export function apply(ctx: Context, config: Config) {
           botUser,
           session,
           sortedEnhancers
-        )
+        })
       } catch (error) {
         logger.error('搜索过程中出现异常:', error)
         return SEARCH_MESSAGES.IMAGE_PROCESS_FAILED

@@ -33,13 +33,16 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
             await page.waitForSelector(urlFormSelector)
             const inputSelector = `${urlFormSelector} input[name="uri"]`
 
-            if (this.mainConfig.debug.enabled) logger.info('[ascii2d] 聚焦并输入 URL')
-            await page.focus(inputSelector)
-            await page.type(inputSelector, options.imageUrl)
+            if (this.mainConfig.debug.enabled) logger.info('[ascii2d] 输入 URL 并提交')
+            // 优化: 直接设置 input value，比 type 快且稳定
+            await page.$eval(inputSelector, (input: HTMLInputElement, url: string) => {
+                input.value = url
+            }, options.imageUrl)
 
             const searchButtonSelector = `${urlFormSelector} button[type="submit"]`
             await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle0' }),
+                // 优化: 改为 domcontentloaded，避免因广告脚本加载慢导致超时
+                page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
                 page.click(searchButtonSelector),
             ])
 
@@ -75,7 +78,8 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
 
     // 解析颜色搜索结果：从 item-box 抽取缩略图、链接、作者等信息
     private async parseResults(page: Page): Promise<Searcher.Result[]> {
-        const rawResults = await page.$$eval('div.item-box', (boxes: HTMLDivElement[]) => {
+        // 优化: 合并数据遍历，直接返回最终结构
+        return await page.$$eval('div.item-box', (boxes: HTMLDivElement[]) => {
             return boxes.slice(1).map((box) => {
                 if (box.querySelector('h5')?.textContent === '広告') return null
 
@@ -94,21 +98,13 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
 
                 return {
                     thumbnail: new URL(thumbnailEl.src, location.origin).href,
+                    similarity: 0,
                     url: mainLink?.href || null,
                     source: `[${sourceInfo}] ${mainLink?.textContent || ''}`.trim(),
                     author: authorLink?.textContent || null,
-                    searchType: '色合検索',
+                    details: ['搜索类型: 色合検索'],
                 }
-            }).filter(Boolean)
+            }).filter(Boolean) as any[]
         })
-
-        return rawResults.map((res) => ({
-            thumbnail: res.thumbnail,
-            similarity: 0,
-            url: res.url,
-            source: res.source,
-            author: res.author,
-            details: [`搜索类型: ${res.searchType}`],
-        }))
     }
 }

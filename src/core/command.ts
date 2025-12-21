@@ -5,7 +5,7 @@ import { ENGINE_ALIASES, PROMPT_MESSAGES } from '../constants'
 import { DebugLogger } from './logger'
 import { Buffer } from 'buffer'
 
-const logger = new Logger('sauce-aggregator:command')
+const logger = new Logger('sauce-aggregator')
 
 /**
  * 指令处理服务 - 处理 sauce 指令的所有逻辑
@@ -39,19 +39,14 @@ export class CommandHandler {
       ? ENGINE_ALIASES[firstWord as keyof typeof ENGINE_ALIASES] ?? (availableEngines.includes(firstWord as any) ? (firstWord as SearchEngineName) : null)
       : null
 
-    // 判断用户是否尝试指定引擎（即使引擎不存在或未启用）
-    const userTriedToSpecifyEngine = firstWord && (targetEngine !== null || !firstWord.match(/^[\w:/@.-]+$/))
+    // [FIX] 增强判断逻辑：排除图片(XML元素)、URL等非引擎名格式
+    const isNonEngineFormat = firstWord && (
+      firstWord.startsWith('<') ||
+      firstWord.match(/^https?:\/\//) ||
+      firstWord.startsWith('file://')
+    )
 
-    if (userTriedToSpecifyEngine) {
-      isSingleEngineSpecified = true
-      if (targetEngine && this.allSearchers[targetEngine]) {
-        searchersToUse = [this.allSearchers[targetEngine]]
-        imageInputText = words.slice(1).join(' ')
-      } else {
-        // 用户指定的引擎不存在或未启用，设置 searchersToUse 为空数组以触发错误提示
-        searchersToUse = []
-      }
-    } else if (targetEngine && this.allSearchers[targetEngine]) {
+    if (!isNonEngineFormat && targetEngine && this.allSearchers[targetEngine]) {
       // 有效的引擎指定
       searchersToUse = [this.allSearchers[targetEngine]]
       imageInputText = words.slice(1).join(' ')
@@ -88,7 +83,7 @@ export class CommandHandler {
 
       return { url: imgData.url, name: imgData.name || 'image.jpg' }
     } catch (error) {
-      this.debugLogger.info('等待用户图片时出错:', error)
+      this.debugLogger.info('[command] 等待用户图片时出错:', error)
       await session.send(PROMPT_MESSAGES.TIMEOUT)
       return null
     }
@@ -119,12 +114,12 @@ export class CommandHandler {
         imageUrl: imgData.url,
         imageBuffer: processedImageBuffer,
         fileName,
-        maxResults: this.config.maxResults,
+        maxResults: this.config.maxResults === 0 ? 3 : this.config.maxResults,
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error)
       this.debugLogger.info(`构建搜索选项失败 (URL: ${imgData.url}):`, errorMsg)
-      logger.error('构建搜索选项失败:', error)
+      logger.error('[command] 构建搜索选项失败:', error)
       return null
     }
   }
