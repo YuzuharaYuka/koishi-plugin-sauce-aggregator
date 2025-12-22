@@ -43,6 +43,7 @@ export const usage = `
 
 #### 可用图源
 *	**[yandere](https://yande.re/post)** : 动漫和游戏插画图站，高清壁纸和原画。
+*	**[konachan](https://konachan.com/post)** : 动漫壁纸站，专注于高质量壁纸。
 *	**[gelbooru](https://gelbooru.com/index.php?page=post&s=list&tags=all)** : 综合性动漫图站，插画、漫画和同人作品。
 *	**[danbooru](https://danbooru.donmai.us/)** : 动漫艺术网站，标签详尽元数据丰富。
 *	**[pixiv](https://www.pixiv.net/)** : 艺术家原创插画、漫画分享社区。
@@ -62,7 +63,7 @@ export function apply(ctx: Context, config: Config) {
   // 初始化核心组件
   const puppeteerManager = initializePuppeteerManager(ctx, config, debugLogger)
   const allSearchers = initializeSearchers(ctx, config, puppeteerManager)
-  const allEnhancers = initializeEnhancers(ctx, config)
+  const allEnhancers = initializeEnhancers(ctx, config, puppeteerManager)
 
   // 获取已启用的引擎和增强器
   const allEnabledSearchers = config.order

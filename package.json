@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-sauce-aggregator",
-  "description": "聚合以图搜图与图源链接解析。快速查找图片出处并获取原图及来源，支持6个搜图引擎，4个图源网站。",
-  "version": "1.8.0",
+  "description": "聚合以图搜图与图源链接解析，快速查找图片出处并获取原图及来源，支持6个搜图引擎，5个图源网站。",
+  "version": "1.8.1",
   "homepage": "https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator",
   "repository": {
     "type": "git",

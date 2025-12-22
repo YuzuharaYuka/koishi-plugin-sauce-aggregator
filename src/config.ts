@@ -8,7 +8,7 @@ import { Buffer } from 'buffer'
 // 支持的搜图引擎标识
 export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot'
 // 支持的图源增强器标识
-export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru' | 'pixiv'
+export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru' | 'pixiv' | 'konachan'
 
 
 // 搜图函数输入选项
@@ -124,6 +124,7 @@ export interface Config {
   iqdb: IQDB.Config
   yandex: Yandex.Config
   yandere: YandeRe.Config
+  konachan: Konachan.Config
   gelbooru: Gelbooru.Config
   danbooru: Danbooru.Config
   ascii2d: Ascii2D.Config
@@ -136,6 +137,7 @@ export namespace TraceMoe { export interface Config { sendVideoPreview: boolean;
 export namespace IQDB { export interface Config { confidenceThreshold?: number; } }
 export namespace Yandex { export interface Config { alwaysAttach: boolean; domain: 'ya.ru' | 'yandex.com'; } }
 export namespace YandeRe { export interface Config { postQuality: 'jpeg' | 'sample' | 'original'; maxRating: 's' | 'q' | 'e'; enableLinkParsing: boolean; } }
+export namespace Konachan { export interface Config { postQuality: 'jpeg' | 'sample' | 'original'; maxRating: 's' | 'q' | 'e'; enableLinkParsing: boolean; } }
 export namespace Gelbooru { export interface Config { keyPairs: { userId: string; apiKey: string }[]; postQuality: 'original' | 'sample' | 'preview'; maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'; enableLinkParsing: boolean; } }
 export namespace Danbooru { export interface Config { keyPairs: { username: string; apiKey: string }[]; postQuality: 'original' | 'sample' | 'preview'; maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'; enableLinkParsing: boolean; } }
 export namespace Ascii2D { export interface Config { alwaysAttach: boolean; } }
@@ -187,12 +189,12 @@ export const Config: Schema<Config> = Schema.intersect([
       .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all或并行搜索）。<br>' +
         '\`Yandex\` 和 \`Ascii2D\` 仅作为附加结果使用。'),
     enhancerOrder: Schema.array(Schema.object({
-      engine: Schema.union(['gelbooru', 'yandere', 'danbooru', 'pixiv']).description('图源'),
+      engine: Schema.union(['gelbooru', 'yandere', 'danbooru', 'pixiv', 'konachan']).description('图源'),
       enabled: Schema.boolean().default(true).description('是否启用'),
     }))
       .role('table')
       .default([
-        { engine: 'yandere', enabled: true }, { engine: 'gelbooru', enabled: true },
+        { engine: 'yandere', enabled: true }, { engine: 'konachan', enabled: true }, { engine: 'gelbooru', enabled: true },
         { engine: 'danbooru', enabled: true }, { engine: 'pixiv', enabled: true },
       ])
       .description('结果增强图源。在此处启用并排序，找到高匹配度结果后，将按顺序尝试获取更详细信息。'),
@@ -283,6 +285,19 @@ export const Config: Schema<Config> = Schema.intersect([
       ]).default('s').description('允许的最高内容评级'),
       enableLinkParsing: Schema.boolean().default(false).description('启用链接解析'),
     }).description('Yande.re 图源设置'),
+    konachan: Schema.object({
+      postQuality: Schema.union([
+        Schema.const('original').description('原图'),
+        Schema.const('jpeg').description('JPEG 全尺寸'),
+        Schema.const('sample').description('预览图'),
+      ]).default('sample').description('图片质量'),
+      maxRating: Schema.union([
+          Schema.const('s').description('安全'),
+          Schema.const('q').description('可疑'),
+          Schema.const('e').description('露骨'),
+      ]).default('s').description('允许的最高内容评级'),
+      enableLinkParsing: Schema.boolean().default(false).description('启用链接解析'),
+    }).description('Konachan 图源设置'),
     gelbooru: Schema.object({
       keyPairs: Schema.array(Schema.object({
           userId: Schema.string().description('User ID').required(),
@@ -345,7 +360,7 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     debug: Schema.object({
       enabled: Schema.boolean().default(false).description('启用调试模式'),
-      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru', 'pixiv']))
+      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru', 'pixiv', 'konachan']))
         .role('checkbox')
         .default([])
         .description('记录原始响应'),

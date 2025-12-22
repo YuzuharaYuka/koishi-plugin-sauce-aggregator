@@ -37,6 +37,7 @@ export const ENHANCER_PATTERNS = {
   danbooru: /danbooru\.donmai\.us\/(?:posts|post\/show)\//,
   gelbooru: /gelbooru\.com\/index\.php\?.*(id=|md5=)/,
   yandere: /yande\.re\/post\/show\//,
+  konachan: /konachan\.com\/post\/show\//,
 } as const
 
 // 图源ID提取正则
@@ -45,6 +46,7 @@ export const ENHANCEMENT_ID_EXTRACTORS = {
   danbooru: /danbooru\.donmai\.us\/(?:posts|post\/show)\/(\d+)/,
   gelbooru: /gelbooru\.com\/index\.php\?.*(?:id=(\d+)|md5=([a-f0-9]{32}))/,
   yandere: /yande\.re\/post\/show\/(\d+)/,
+  konachan: /konachan\.com\/post\/show\/(\d+)/,
 } as const
 
 // 搜索结果提示信息

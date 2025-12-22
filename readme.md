@@ -7,7 +7,7 @@
 ## 功能
 
 - **多引擎搜索**：支持 [SauceNAO](https://saucenao.com/)、[IQDB](https://www.iqdb.org/)、[Trace.moe](https://trace.moe/)、[搜图bot酱](https://soutubot.moe/)、[Ascii2D](https://ascii2d.net/) 和 [Yandex](https://ya.ru/)。
-- **图源增强**：当搜索结果来自 [Pixiv](https://www.pixiv.net/)、[Danbooru](https://danbooru.donmai.us/)、[Gelbooru](https://gelbooru.com/) 或 [Yande.re](https://yande.re/post) 时，可获取作品详情、标签及原图。
+- **图源增强**：当搜索结果来自 [Pixiv](https://www.pixiv.net/)、[Danbooru](https://danbooru.donmai.us/)、[Gelbooru](https://gelbooru.com/)、[Yande.re](https://yande.re/post) 或 [Konachan](https://konachan.com/post) 时，可获取作品详情、标签及原图。
 - **搜索策略**：
   - **串行模式**：按顺序调用引擎，在找到高相似度结果后停止，资源占用较低。
   - **并行模式**：同时调用所有引擎，优先返回高相似度结果，响应速度较快。
@@ -139,6 +139,14 @@ sauce b [图片]  # b 是 soutubot 的别名
 | `postQuality` | `string` | `jpeg` | 图片质量: `original`, `jpeg`, `sample`。 |
 | `maxRating` | `string` | `s` | 最高内容评级: `s` (安全), `q` (可疑), `e` (露骨)。 |
 | `enableLinkParsing` | `boolean` | `false`| 启用 `yande.re` 链接自动解析。 |
+
+#### Konachan
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `postQuality` | `string` | `sample` | 图片质量: `original` (原始文件), `jpeg` (完整尺寸 JPG), `sample` (1500px 缩略图)。 |
+| `maxRating` | `string` | `s` | 最高内容评级: `s` (安全), `q` (可疑), `e` (露骨)。 |
+| `enableLinkParsing` | `boolean` | `false`| 启用 `konachan.com` 链接自动解析（支持帖子链接和图片链接）。 |
 
 #### Gelbooru
 

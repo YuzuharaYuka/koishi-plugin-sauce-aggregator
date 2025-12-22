@@ -11,6 +11,7 @@ import { Yandex } from './searchers/yandex'
 import { Ascii2D } from './searchers/ascii2d'
 import { SoutuBot } from './searchers/soutubot'
 import { YandeReEnhancer } from './enhancers/yande'
+import { KonachanEnhancer } from './enhancers/konachan'
 import { GelbooruEnhancer } from './enhancers/gelbooru'
 import { DanbooruEnhancer } from './enhancers/danbooru'
 import { PixivEnhancer } from './enhancers/pixiv'
@@ -22,7 +23,7 @@ const logger = new Logger('sauce-aggregator')
 
 // Enhancer 初始化元数据与验证器
 interface EnhancerMetadata {
-  constructor: new (ctx: Context, config: Config, subConfig: unknown) => Enhancer
+  constructor: new (ctx: Context, config: Config, subConfig: unknown, puppeteerManager?: PuppeteerManager) => Enhancer
   needsKeys: boolean
   keyName: string
   configKey: keyof Config
@@ -36,6 +37,13 @@ const ENHANCER_METADATA: Record<string, EnhancerMetadata> = {
     needsKeys: false,
     keyName: '',
     configKey: 'yandere',
+    validator: () => true,
+  },
+  konachan: {
+    constructor: KonachanEnhancer,
+    needsKeys: false,
+    keyName: '',
+    configKey: 'konachan',
     validator: () => true,
   },
   gelbooru: {
@@ -108,14 +116,15 @@ export function initializeSearchers(
 // 初始化所有图源增强器
 export function initializeEnhancers(
   ctx: Context,
-  config: Config
+  config: Config,
+  puppeteerManager: PuppeteerManager
 ): Record<string, Enhancer> {
   const allEnhancers: Record<string, Enhancer> = {}
 
   for (const [name, metadata] of Object.entries(ENHANCER_METADATA)) {
     if (metadata.validator(config)) {
       const subConfig = config[metadata.configKey]
-      allEnhancers[name] = new metadata.constructor(ctx, config, subConfig)
+      allEnhancers[name] = new metadata.constructor(ctx, config, subConfig, puppeteerManager)
     } else if (metadata.needsKeys) {
       logger.info(`[bootstrap] [${name}] 图源未配置任何有效的${metadata.keyName}，将无法启用。`)
     }

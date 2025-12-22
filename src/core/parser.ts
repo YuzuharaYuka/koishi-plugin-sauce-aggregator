@@ -57,6 +57,12 @@ export class LinkParser {
         enhancer: allEnhancers.yandere,
         config: config.yandere,
       },
+      {
+        name: 'konachan',
+        regex: /(konachan\.(?:com|net)\/post\/show\/\d+|konachan\.(?:com|net)\/(?:image|data\/sample|jpeg)\/[a-f0-9]+\/Konachan\.(?:com|net)[^\/]*?[-_\s]\d+[^\/]*?\.\w+)/i,
+        enhancer: allEnhancers.konachan,
+        config: config.konachan,
+      },
     ]
   }
 
