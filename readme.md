@@ -7,7 +7,7 @@
 ## 功能
 
 - **多引擎搜索**：支持 [SauceNAO](https://saucenao.com/)、[IQDB](https://www.iqdb.org/)、[Trace.moe](https://trace.moe/)、[搜图bot酱](https://soutubot.moe/)、[Ascii2D](https://ascii2d.net/) 和 [Yandex](https://ya.ru/)。
-- **图源增强**：当搜索结果来自 [Pixiv](https://www.pixiv.net/)、[Danbooru](https://danbooru.donmai.us/)、[Gelbooru](https://gelbooru.com/)、[Yande.re](https://yande.re/post) 或 [Konachan](https://konachan.com/post) 时，可获取作品详情、标签及原图。
+- **图源增强**：当搜索结果来自 [Pixiv](https://www.pixiv.net/)、[Danbooru](https://danbooru.donmai.us/)、[Gelbooru](https://gelbooru.com/)、[Yande.re](https://yande.re/post)、[Konachan](https://konachan.com/post) 时，可获取作品详情、标签及原图。
 - **搜索策略**：
   - **串行模式**：按顺序调用引擎，在找到高相似度结果后停止，资源占用较低。
   - **并行模式**：同时调用所有引擎，优先返回高相似度结果，响应速度较快。
@@ -26,7 +26,7 @@
 | 依赖项 | 引擎 | 图源 |
 | :--- | :--- | :--- |
 | **API 密钥/凭据** | `SauceNAO` | `Gelbooru`, `Danbooru`, `Pixiv` |
-| **浏览器环境 (Puppeteer)** | `SoutuBot`, `Yandex`, `Ascii2D` | - |
+| **浏览器环境 (Puppeteer)** | `Yandex`, `Ascii2D` | - |
 
 ## 指令说明
 
@@ -77,7 +77,7 @@ sauce b [图片]  # b 是 soutubot 的别名
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `proxy` | `string` | `http://127.0.0.1:7890` | **独立代理**。仅影响 `Danbooru` 图源及 `SoutuBot`, `Yandex`, `Ascii2D` 等需要浏览器的引擎。其他请求仍遵循全局代理 (如 `proxy-agent`)。 |
+| `proxy` | `string` | `http://127.0.0.1:7890` | **独立代理**。仅影响 `Danbooru` 图源及 `SoutuBot`, `Yandex`, `Ascii2D` 等引擎。其他请求仍遵循全局代理 (如 `proxy-agent`)。 |
 | `puppeteer.persistentBrowser` | `boolean` | `false` | 开启后，浏览器将常驻后台，加快响应速度但占用资源。 |
 | `puppeteer.concurrency` | `number` | `1` | 浏览器并发任务数上限。对大多数用户而言，`1` 是最稳定高效的选择。 |
 | `puppeteer.browserCloseTimeout` | `number` | `30` | (非常驻模式) 任务结束后，等待多少秒关闭浏览器。 |
@@ -110,10 +110,16 @@ sauce b [图片]  # b 是 soutubot 的别名
 
 #### 搜图bot酱 (SoutuBot)
 
+直接调用站点搜索接口 (`POST https://soutubot.moe/api/search`)，**不需要浏览器环境**。
+
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `confidenceThreshold` | `number` | `65` | 独立高匹配度阈值 (%)，0 表示使用全局值。 |
+| `confidenceThreshold` | `number` | `28` | 独立高匹配度阈值 (%)，0 表示使用全局值。站点相似度分数普遍偏低，建议 25 ~ 35。 |
 | `maxHighConfidenceResults` | `number` | `3` | 高匹配度结果的最大显示数量。 |
+| `searchMode` | `'normal' \| 'strict'` | `normal` | 搜索模式，对应站点「常规 / 严格」开关。`strict` 匹配更精确但更容易没有结果。 |
+| `topK` | `number` | `25` | 向站点每个索引请求的候选数量。 |
+| `useProxy` | `boolean` | `true` | 是否使用上方的独立代理访问该接口。 |
+| `apiEndpoint` | `string` | `https://soutubot.moe/api/search` | 接口地址，站点更换域名时可覆盖。 |
 
 #### Yandex
 
@@ -162,9 +168,15 @@ sauce b [图片]  # b 是 soutubot 的别名
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `keyPairs` | `object` | `[]` | 用户凭据 (用户名与 API Key)。可于登录 **[Danbooru](https://danbooru.donmai.us/login?url=%2F)** 后，在 `My Account` -> 档案底部查看。 |
+| `userAgentId` | `string` | `''` | **用户 ID**。只需填写 ID，其余部分由插件拼接为 `Sauce-aggregator/<版本> (user #<ID>)`。**留空则自动使用凭据中的用户名**。 |
 | `postQuality` | `string` | `sample` | 图片质量: `original`, `sample`, `preview`。 |
 | `maxRating` | `string` | `general`| 最高内容评级: `general`, `sensitive`, `questionable`, `explicit`。 |
 | `enableLinkParsing` | `boolean` | `false`| 启用 `danbooru.donmai.us` 链接自动解析。 |
+
+> **关于用户 ID**：Danbooru 要求 API 客户端的 User-Agent 中声明用户 ID（见 [官方公告](https://shima.donmai.us/forum_topics/37341)），
+> 否则会被 Cloudflare 判定为爬虫并返回 403 挑战页（`Just a moment...`，表现为解析失败）；使用普通浏览器 User-Agent 同样会被拦截。
+> ID 可在 **[个人资料页](https://danbooru.donmai.us/profile)** 查看，插件会拼成 `Sauce-aggregator/<版本> (user #<ID>)`。
+> **建议填写账号的数字 ID** 而非用户名，避免与站点上的同名账号混淆。
 
 #### Pixiv
 

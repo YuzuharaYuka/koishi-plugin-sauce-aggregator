@@ -2,8 +2,9 @@
 // 常量定义：搜图引擎、增强器、消息、错误等
 
 // 需要浏览器的引擎和主流引擎
+// 注意: soutubot 已改为直接调用站点搜索接口(/api/search)，不再需要浏览器实例
 export const SEARCH_ENGINES = {
-  PUPPETEER: ['yandex', 'soutubot', 'ascii2d'] as const,
+  PUPPETEER: ['yandex', 'ascii2d'] as const,
   MAIN: ['saucenao', 'iqdb', 'tracemoe', 'soutubot'] as const,
 } as const
 
@@ -15,7 +16,7 @@ export const ENHANCER_LABELS = {
 
 // 交互提示消息
 export const PROMPT_MESSAGES = {
-  WAITING_IMAGE: (timeout: number) => `请发送图片... (超时: ${timeout}秒)`,
+  WAITING_IMAGE: (timeout: number) => `请发送图片…… (超时: ${timeout}秒)`,
   CANCELLED: '已取消。',
   NO_IMAGE_FOUND: '未找到图片，已取消。',
   TIMEOUT: '等待超时，已取消。',

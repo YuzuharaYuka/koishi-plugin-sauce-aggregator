@@ -25,7 +25,8 @@ const logger = new Logger('sauce-aggregator')
 interface EnhancerMetadata {
   constructor: new (ctx: Context, config: Config, subConfig: unknown, puppeteerManager?: PuppeteerManager) => Enhancer
   needsKeys: boolean
-  keyName: string
+  /** 缺少凭据时用于提示的说明文字，需自带反引号 */
+  keyLabel: string
   configKey: keyof Config
   validator: (config: Config) => boolean
 }
@@ -35,35 +36,35 @@ const ENHANCER_METADATA: Record<string, EnhancerMetadata> = {
   yandere: {
     constructor: YandeReEnhancer,
     needsKeys: false,
-    keyName: '',
+    keyLabel: '',
     configKey: 'yandere',
     validator: () => true,
   },
   konachan: {
     constructor: KonachanEnhancer,
     needsKeys: false,
-    keyName: '',
+    keyLabel: '',
     configKey: 'konachan',
     validator: () => true,
   },
   gelbooru: {
     constructor: GelbooruEnhancer,
     needsKeys: true,
-    keyName: 'API Key',
+    keyLabel: '`API Key`',
     configKey: 'gelbooru',
     validator: (c: Config) => c.gelbooru.keyPairs?.some((p) => p.userId && p.apiKey) ?? false,
   },
   danbooru: {
     constructor: DanbooruEnhancer,
     needsKeys: true,
-    keyName: '用户凭据',
+    keyLabel: '`用户名` 与 `API Key`',
     configKey: 'danbooru',
     validator: (c: Config) => c.danbooru.keyPairs?.some((p) => p.username && p.apiKey) ?? false,
   },
   pixiv: {
     constructor: PixivEnhancer,
     needsKeys: true,
-    keyName: 'Refresh Token',
+    keyLabel: '`Refresh Token`',
     configKey: 'pixiv',
     validator: (c: Config) => !!c.pixiv.refreshToken,
   },
@@ -76,11 +77,11 @@ export function initializePuppeteerManager(ctx: Context, config: Config, debugLo
       logger.info('[bootstrap] 正在使用全局 `puppeteer` 服务。')
       return new PuppeteerManager(ctx, config, ctx.puppeteer as unknown as GlobalPuppeteer)
     } else {
-      logger.warn('[bootstrap] 配置为使用全局 `puppeteer` 服务，但该服务未启用。自动回退到内置 `puppeteer-extra` 服务。')
+      logger.warn('[bootstrap] 已配置使用全局 `puppeteer` 服务，但该服务未启用，将回退到内置 `puppeteer-extra`。')
       return new PuppeteerManager(ctx, config)
     }
   } else {
-    logger.info('[bootstrap] 正在使用插件内置的 Puppeteer-extra 服务。')
+    logger.info('[bootstrap] 正在使用插件内置的 `puppeteer-extra` 服务。')
     return new PuppeteerManager(ctx, config)
   }
 }
@@ -96,15 +97,18 @@ export function initializeSearchers(
   if (config.saucenao.apiKeys?.filter(Boolean).length > 0) {
     allSearchers.saucenao = new SauceNAO(ctx, config, config.saucenao)
   } else {
-    logger.info('[bootstrap] [saucenao] 未提供任何有效的 API Key，引擎已禁用。')
+    logger.info('[bootstrap] [saucenao] 未配置有效的 `API Key`，引擎已禁用。')
   }
 
   const basicSearchers = { tracemoe: TraceMoe, iqdb: IQDB }
-  const puppeteerSearchers = { yandex: Yandex, ascii2d: Ascii2D, soutubot: SoutuBot }
+  // soutubot 直接调用站点搜索接口，不需要浏览器实例
+  const puppeteerSearchers = { yandex: Yandex, ascii2d: Ascii2D }
 
   for (const [name, Ctor] of Object.entries(basicSearchers)) {
     allSearchers[name] = new Ctor(ctx, config, config[name])
   }
+
+  allSearchers.soutubot = new SoutuBot(ctx, config, config.soutubot)
 
   for (const [name, Ctor] of Object.entries(puppeteerSearchers)) {
     allSearchers[name] = new Ctor(ctx, config, config[name], puppeteerManager)
@@ -126,7 +130,7 @@ export function initializeEnhancers(
       const subConfig = config[metadata.configKey]
       allEnhancers[name] = new metadata.constructor(ctx, config, subConfig, puppeteerManager)
     } else if (metadata.needsKeys) {
-      logger.info(`[bootstrap] [${name}] 图源未配置任何有效的${metadata.keyName}，将无法启用。`)
+      logger.info(`[bootstrap] [${name}] 图源未配置有效的 ${metadata.keyLabel}，将无法启用。`)
     }
   }
 

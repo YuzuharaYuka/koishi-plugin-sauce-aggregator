@@ -50,10 +50,11 @@ export const usage = `
 ---
 
 ###	注意：
-*	部分引擎可能需要配置代理才可用, **http** 相关报错请先检查代理网络设置。
+*	部分引擎可能需要配置代理才可用，**http** 相关报错请先检查代理网络设置。
 *	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
-*	\`saucenao\` 引擎, \`gelbooru\` , \`danbooru\` , \`pixiv\` 图源需要配置 API Key 或 Token 才可用。
-*	\`yandex\` , \`ascii2d\` ,  \`soutubot\` 引擎需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
+*	\`saucenao\` 引擎，\`gelbooru\` 、\`danbooru\` 、\`pixiv\` 图源需要配置 API Key 或 Token 才可用。
+*	\`soutubot\` 引擎为直接接口调用，会自动使用下方的独立代理，无需浏览器实例。
+*	\`yandex\` 、\`ascii2d\` 引擎需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
 `
 
 export function apply(ctx: Context, config: Config) {

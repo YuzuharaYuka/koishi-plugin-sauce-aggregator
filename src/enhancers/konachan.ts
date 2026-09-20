@@ -54,10 +54,10 @@ export class KonachanEnhancer extends Enhancer<KonachanConfig.Config> {
     const postId = this.parsePostId(konachanUrl)
     if (!postId) return null
 
-    if (this.mainConfig.debug.enabled) logger.info(`[konachan] 检测到 Konachan 链接,帖子 ID: ${postId},开始获取图源信息...`)
+    if (this.mainConfig.debug.enabled) logger.info(`[konachan] 检测到 Konachan 链接，帖子 ID: ${postId}，开始获取图源信息...`)
 
     try {
-      // 构建API URL - 使用 konachan.net (更稳定,SFW，支持匿名访问)
+      // 构建 API URL - 使用 konachan.net (更稳定，SFW，支持匿名访问)
       const apiUrl = `https://konachan.net/post.json?tags=id:${postId}`
 
       // 使用 Koishi 内置的 ctx.http,避免触发人机验证
@@ -120,7 +120,7 @@ export class KonachanEnhancer extends Enhancer<KonachanConfig.Config> {
 
       if (this.mainConfig.debug.enabled) logger.info(`[konachan] 正在下载图源图片 (${this.subConfig.postQuality} 质量)... URL: ${downloadUrl}`)
 
-      // 使用 ctx.http 下载图片,添加 Referer 防盗链
+      // 使用 ctx.http 下载图片，添加 Referer 防盗链
       const imageBuffer = await this.ctx.http.get(downloadUrl, {
         responseType: 'arraybuffer',
         timeout: this.mainConfig.requestTimeout * 1000,

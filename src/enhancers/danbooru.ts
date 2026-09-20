@@ -1,6 +1,6 @@
 import { Context, Logger, h } from 'koishi'
 import { Config, Danbooru as DanbooruConfig, Enhancer, EnhancedResult, Searcher } from '../config'
-import { getImageTypeFromUrl, USER_AGENT } from '../utils'
+import { getImageTypeFromUrl, buildDanbooruUserAgent } from '../utils'
 import type { GotScraping } from 'got-scraping'
 
 const logger = new Logger('sauce-aggregator')
@@ -44,6 +44,26 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     super(ctx, mainConfig, subConfig);
   }
 
+  /**
+   * 构造请求头。
+   *
+   * Danbooru 要求 API 客户端的 User-Agent 中声明用户 ID（`user #<ID>`），
+   * 否则会被 Cloudflare 判定为爬虫并返回 403 挑战页（`Just a moment...`）。
+   * 用户只需填写 ID，其余部分由插件拼接，版本号取自 package.json。
+   */
+  private buildHeaders(): Record<string, string> {
+    return {
+      'user-agent': buildDanbooruUserAgent(this.resolveUserId()),
+    };
+  }
+
+  /** 取用户 ID：优先后台填写的 `userAgentId`，留空则回退到凭据中的用户名 */
+  private resolveUserId(): string {
+    const configured = this.subConfig.userAgentId?.trim();
+    if (configured) return configured.replace(/^#/, '');
+    return this.subConfig.keyPairs?.[0]?.username?.trim() || '';
+  }
+
   private async _getGotInstance(isCdn: boolean = false): Promise<GotScraping> {
     // 确保只导入一次，并处理可能的模块系统兼容性问题
     // 使用动态导入延迟加载，避免在模块加载时就触发 get-stream 的导入
@@ -64,38 +84,45 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       }
     }
 
+    // 留空表示直连：不能把空串交给 got-scraping，否则会抛出难以理解的内部错误
+    const proxyUrl = this.mainConfig.proxy?.trim() || undefined;
+    const headers = this.buildHeaders();
+
+    if (!proxyUrl && this.mainConfig.debug.enabled) {
+        logger.info('[danbooru] 未配置独立代理，将直连访问。');
+    }
+
     // For CDN requests, we don't need the prefixUrl
     if (isCdn) {
-        const proxyUrl = this.mainConfig.proxy;
         return gotScraping!.extend({
             timeout: { request: this.mainConfig.requestTimeout * 1000 },
             retry: { limit: this.mainConfig.enhancerRetryCount },
-            proxyUrl: proxyUrl,
-            headerGeneratorOptions: {
-                browsers: [{ name: 'chrome', minVersion: 100 }],
-                devices: ['desktop'],
-                operatingSystems: ['windows'],
-            },
+            ...(proxyUrl ? { proxyUrl } : {}),
+            headers,
         });
     }
 
     if (this._gotInstance) return this._gotInstance;
 
-    const proxyUrl = this.mainConfig.proxy;
-    if (this.mainConfig.debug.enabled && proxyUrl) {
-        logger.info(`[danbooru] got-scraping 将使用独立代理: ${proxyUrl}`);
+    // 未声明用户 ID 时 Danbooru 会拦截请求，提前给出可操作的告警
+    if (!this.resolveUserId()) {
+        logger.warn(
+            '[danbooru] 未配置用户 ID，User-Agent 缺少 `user #<ID>` 声明，请求很可能被 Cloudflare 拦截 (403)。' +
+            '请在「Danbooru 图源设置」中填写用户 ID，或配置凭据中的用户名。'
+        );
+    }
+
+    if (this.mainConfig.debug.enabled) {
+        if (proxyUrl) logger.info(`[danbooru] got-scraping 将使用独立代理: ${proxyUrl}`);
+        logger.info(`[danbooru] User-Agent: ${headers['user-agent']}`);
     }
 
     return this._gotInstance = gotScraping!.extend({
         prefixUrl: 'https://danbooru.donmai.us',
         timeout: { request: this.mainConfig.requestTimeout * 1000 },
         retry: { limit: this.mainConfig.enhancerRetryCount },
-        proxyUrl: proxyUrl,
-        headerGeneratorOptions: {
-            browsers: [{ name: 'chrome', minVersion: 100 }],
-            devices: ['desktop'],
-            operatingSystems: ['windows'],
-        },
+        ...(proxyUrl ? { proxyUrl } : {}),
+        headers,
     });
   }
 
@@ -151,17 +178,21 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
         return { details, imageBuffer, imageType };
 
     } catch (error) {
-      // [FIX] 精简错误日志，只保留核心信息
+      // makeApiRequest 已给出可操作的错误描述，这里只做记录与包装
       const errorMessage = error.name === 'TimeoutError'
           ? `请求超时 (${this.mainConfig.requestTimeout}秒)`
           : (error.message || '未知错误');
 
       logger.error(`[danbooru] 处理过程中发生错误 (ID: ${postId}):`, errorMessage);
 
-      if (this.mainConfig.debug.enabled && error.response) {
+      if (
+        this.mainConfig.debug.enabled &&
+        error.response &&
+        !/Just a moment|challenge-platform|_cf_chl_opt/i.test(String(error.response.body || ''))
+      ) {
           logger.info(`[danbooru] 详细错误响应:
   - Status: ${error.response.statusCode}
-  - Body: ${error.response.body}`);
+  - Body: ${String(error.response.body).slice(0, 1000)}`);
       }
       throw new Error(`[danbooru] 处理失败: ${errorMessage}`);
     }
@@ -200,7 +231,12 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
   - Auth: ${authMethod}`);
     }
 
-    const post = await got.get(url, requestOptions).json<DanbooruPost>();
+    let post: DanbooruPost;
+    try {
+        post = await got.get(url, requestOptions).json<DanbooruPost>();
+    } catch (error) {
+        throw new Error(this.describeRequestError(error));
+    }
 
     if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info(`[danbooru] API 响应: ${JSON.stringify(post, null, 2)}`);
@@ -208,6 +244,42 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
 
     if (post.success === false) throw new Error(`API 返回错误: ${post.message || '未知错误'}`);
     return post;
+  }
+
+  /**
+   * 把 got 的错误翻译成可操作的提示。
+   * 最常见的是 Cloudflare 挑战页（403 + HTML），根因是 User-Agent 不符合 Danbooru 的 API 要求。
+   */
+  private describeRequestError(error: any): string {
+    const status = error?.response?.statusCode;
+    const body = typeof error?.response?.body === 'string' ? error.response.body : '';
+
+    // got 在响应不是 JSON 时会直接抛解析错误，结合响应体判断是否为 Cloudflare 挑战
+    const isCloudflareChallenge = /Just a moment|challenge-platform|cf-mitigated|_cf_chl_opt|Enable JavaScript and cookies/i.test(body)
+        || /<!DOCTYPE html>/i.test(body)
+        || /is not valid JSON/i.test(error?.message || '');
+
+    if (status === 403 && isCloudflareChallenge) {
+        const hint = this.resolveUserId()
+            ? '当前用户 ID 仍被拒绝，请确认 ID 有效，或更换代理出口 IP。'
+            : '请在「Danbooru 图源设置」中填写用户 ID，或配置凭据中的用户名。';
+        logger.warn(`[danbooru] 被 Cloudflare 拦截 (403 挑战页)。${hint}`);
+        return '被 Cloudflare 拦截 (403)，需按 Danbooru 要求配置带 `user #<用户ID>` 的 User-Agent。';
+    }
+
+    if (status === 401 || status === 403) {
+        return `认证失败 (${status})，请检查 API Key / 用户名是否正确。`;
+    }
+    if (status === 404) {
+        return '帖子不存在或已被删除 (404)。';
+    }
+    if (status === 429) {
+        return '请求过于频繁 (429)，请稍后再试。';
+    }
+    if (error?.name === 'TimeoutError' || /timeout/i.test(error?.message || '')) {
+        return `请求超时 (${this.mainConfig.requestTimeout}秒)。`;
+    }
+    return error?.message || `网络请求失败 (${error?.name || '未知错误'})。`;
   }
 
   private findDanbooruUrl(result: Searcher.Result): string | null {
@@ -278,3 +350,4 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     return [h.text(info.join('\n'))];
   }
 }
+

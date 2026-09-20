@@ -5,6 +5,7 @@ import { Context, Logger } from 'koishi'
 import { Config, SearchEngineName } from './config'
 import { PuppeteerManager } from './puppeteer'
 import { DebugLogger } from './core/logger'
+import { disposeProxyDispatchers } from './core/http'
 
 const logger = new Logger('sauce-aggregator')
 
@@ -16,7 +17,7 @@ export async function initializePuppeteer(
   debugLogger: DebugLogger
 ): Promise<void> {
   if (config.puppeteer.provider === 'internal' && config.puppeteer.persistentBrowser) {
-    const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d', 'soutubot']
+    const puppeteerSearchers: SearchEngineName[] = ['yandex', 'ascii2d']
     const needsPuppeteerForSearch = config.order.some(
       (e) => e.enabled && puppeteerSearchers.includes(e.engine)
     )
@@ -43,6 +44,8 @@ export async function disposePuppeteer(puppeteerManager: PuppeteerManager): Prom
   } catch (error) {
     logger.warn('[lifecycle] 清理 Puppeteer 资源时出错:', error)
   }
+  // 释放 soutubot 等直连接口使用的代理 dispatcher
+  await disposeProxyDispatchers()
 }
 
 // 注册生命周期钩子
