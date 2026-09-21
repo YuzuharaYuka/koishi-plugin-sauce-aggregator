@@ -2,6 +2,8 @@
 // sauce-aggregator 插件入口，负责指令注册与调度
 
 import { Context, Logger } from 'koishi'
+import path from 'path'
+import type {} from '@koishijs/plugin-console'
 import { Config, SearchEngineName } from './config'
 import { SEARCH_MESSAGES, COMMAND_ERRORS } from './constants'
 import { SearchHandler } from './core/search'
@@ -15,7 +17,7 @@ import { selectSearchStrategy } from './strategy'
 export const name = 'sauce-aggregator'
 export const inject = {
   required: ['http'],
-  optional: ['puppeteer'],
+  optional: ['puppeteer', 'console'],
 }
 
 const logger = new Logger(name)
@@ -54,6 +56,7 @@ export const usage = `
 *	部分引擎可能需要配置代理才可用，**http** 相关报错请先检查代理网络设置。
 *	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
 *	\`saucenao\` 、\`googlelens\`引擎，\`gelbooru\` 、\`danbooru\` 、\`pixiv\` 图源需要配置 API Key 或 Token 才可用。
+* \`yandex\` 、 \`ascii2d\`引擎需要启用浏览器服务，服务器性能有限可以考虑关闭。
 `
 
 export function apply(ctx: Context, config: Config) {
@@ -157,4 +160,12 @@ export function apply(ctx: Context, config: Config) {
 
   // 注册生命周期钩子
   registerLifecycleHooks(ctx, config, puppeteerManager, debugLogger)
+
+  // 注册控制台客户端入口：配置页右侧的悬浮导航
+  ctx.inject(['console'], (ctx) => {
+    ctx.console.addEntry({
+      dev: path.resolve(__dirname, '../client/index.ts'),
+      prod: path.resolve(__dirname, '../dist'),
+    })
+  })
 }

@@ -323,11 +323,11 @@ export const Config: Schema<Config> = Schema.intersect([
         Schema.const('ya.ru').description('ya.ru (推荐)'),
         Schema.const('yandex.com').description('yandex.com (锁区)'),
       ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名'),
-      retries: Schema.number().min(0).max(3).default(1).description('**失败重试次数**'),
+      retries: Schema.number().min(0).max(3).default(1).description('失败重试次数'),
     }).description('Yandex 设置'),
     ascii2d: Schema.object({
         alwaysAttach: Schema.boolean().default(false).description('总是附加\`Ascii2D\` 结果'),
-        retries: Schema.number().min(0).max(3).default(1).description('**失败重试次数**'),
+        retries: Schema.number().min(0).max(3).default(1).description('失败重试次数'),
         resolveTimeout: Schema.number().min(10).max(180).default(60).description('**结果等待时间 (秒)**<br>' +
           '提交图片后等待结果出现的额外时间，与「全局网络请求超时」取较大值生效'),
     }).description('Ascii2D 设置'),

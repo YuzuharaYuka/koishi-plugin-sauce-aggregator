@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-sauce-aggregator",
   "description": "聚合以图搜图与图源链接解析，快速查找图片出处并获取原图及来源，支持7个搜图引擎，5个图源网站。",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "homepage": "https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator",
   "repository": {
     "type": "git",
@@ -10,7 +10,8 @@
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
-    "lib"
+    "lib",
+    "dist"
   ],
   "license": "MIT",
   "keywords": [
@@ -32,6 +33,11 @@
   ],
   "peerDependencies": {
     "koishi": "^4.18.0"
+  },
+  "devDependencies": {
+    "@koishijs/client": "^5.30.11",
+    "@koishijs/plugin-console": "^5.30.11",
+    "vue": "^3.5.26"
   },
   "dependencies": {
     "@puppeteer/browsers": "^2.13.0",
