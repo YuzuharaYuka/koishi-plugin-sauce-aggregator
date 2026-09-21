@@ -1,12 +1,31 @@
 
 // 常量定义：搜图引擎、增强器、消息、错误等
 
-// 需要浏览器的引擎和主流引擎
+import type { Config } from './config'
+
+// 需要浏览器的引擎、主流引擎与附加（补充）引擎
 // 注意: soutubot 已改为直接调用站点搜索接口(/api/search)，不再需要浏览器实例
 export const SEARCH_ENGINES = {
   PUPPETEER: ['yandex', 'ascii2d'] as const,
   MAIN: ['saucenao', 'iqdb', 'tracemoe', 'soutubot'] as const,
+  // 附加引擎：不参与「找到高匹配度即停止」的判定，是否展示由各自的 alwaysAttach 决定
+  ATTACH: ['yandex', 'ascii2d', 'googlelens'] as const,
 } as const
+
+// 判断某个引擎是否为附加（补充）引擎
+export function isAttachEngine(name: string): boolean {
+  return (SEARCH_ENGINES.ATTACH as readonly string[]).includes(name)
+}
+
+// 判断某个引擎是否已开启「总是附加结果」
+export function isAlwaysAttach(config: Config, name: string): boolean {
+  switch (name) {
+    case 'yandex': return !!config.yandex?.alwaysAttach
+    case 'ascii2d': return !!config.ascii2d?.alwaysAttach
+    case 'googlelens': return !!config.googlelens?.alwaysAttach
+    default: return false
+  }
+}
 
 // 增强器标签
 export const ENHANCER_LABELS = {
@@ -29,6 +48,7 @@ export const ENGINE_ALIASES = {
   t: 'tracemoe',
   y: 'yandex',
   a: 'ascii2d',
+  g: 'googlelens',
   b: 'soutubot',
 } as const
 
@@ -89,9 +109,11 @@ export const SPECIAL_ENGINES = {
   TRACEMOE: 'tracemoe',
   YANDEX: 'yandex',
   ASCII2D: 'ascii2d',
+  GOOGLELENS: 'googlelens',
 } as const
 
 // 搜索过滤器配置
+// 顺序模式默认不主动调用附加引擎，由各自 alwaysAttach 或「未找到高匹配度」时补位
 export const SEARCH_FILTERS = {
-  SEQUENTIAL_EXCLUDE: ['yandex', 'ascii2d'] as const,
+  SEQUENTIAL_EXCLUDE: SEARCH_ENGINES.ATTACH,
 } as const

@@ -1,7 +1,7 @@
 import { Context, Logger, Session, h } from 'koishi'
 import { Config, Searcher, SearchEngineName, SearchOptions, CommandParseResult, ImageInput } from '../config'
 import { getImageUrlAndName, preprocessImage, detectImageType } from '../utils'
-import { ENGINE_ALIASES, PROMPT_MESSAGES } from '../constants'
+import { ENGINE_ALIASES, PROMPT_MESSAGES, isAlwaysAttach } from '../constants'
 import { DebugLogger } from './logger'
 import { Buffer } from 'buffer'
 
@@ -125,15 +125,12 @@ export class CommandHandler {
   }
 
   /**
-   * 计算附加搜索器（Yandex 和 Ascii2D 的补充搜索）
+   * 计算附加搜索器（Yandex、Ascii2D、Google Lens 的补充搜索）
+   * 仅返回开启了「总是附加结果」且不在本次主搜索范围内的引擎
    */
   public getAttachSearchers(mainSearchers: Searcher[]): Searcher[] {
     return this.allEnabledSearchers.filter((s) => {
-      const isAttachEngine =
-        (this.config.yandex.alwaysAttach && s.name === 'yandex') ||
-        (this.config.ascii2d.alwaysAttach && s.name === 'ascii2d')
-
-      return isAttachEngine && !mainSearchers.some(m => m.name === s.name)
+      return isAlwaysAttach(this.config, s.name) && !mainSearchers.some(m => m.name === s.name)
     })
   }
 }

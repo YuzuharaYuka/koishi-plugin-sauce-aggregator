@@ -135,7 +135,7 @@ export class GelbooruEnhancer extends Enhancer<GelbooruConfig.Config> {
       const imageType = getImageTypeFromUrl(downloadUrl);
 
       return { details, imageBuffer, imageType };
-    } catch (error) {
+    } catch (error: any) {
       logger.error(`[gelbooru] 获取图源信息 (${logIdentifier}) 时发生错误:`, error.message);
       return null;
     }

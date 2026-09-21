@@ -66,7 +66,7 @@ class PixivApiService {
           return true;
         }
         return false;
-      } catch (error) {
+      } catch (error: any) {
         this.accessToken = null;
         logger.error('[pixiv] 刷新 AccessToken 失败:', error.response?.data || error.message);
         return false;
@@ -92,7 +92,7 @@ class PixivApiService {
     });
     try {
       return await makeRequest();
-    } catch (error) {
+    } catch (error: any) {
       const errorMsg = error.response?.data?.error?.message || '';
       if (error.response?.status === 401 || (error.response?.status === 400 && /invalid_grant|invalid_token/i.test(errorMsg))) {
         if (this.mainConfig.debug.enabled) logger.info('[pixiv] AccessToken 已失效，尝试强制刷新...');
@@ -109,7 +109,7 @@ class PixivApiService {
     try {
       const response = await this._request(`https://app-api.pixiv.net/v1/illust/detail`, { illust_id: pid, filter: 'for_ios' });
       return response.illust;
-    } catch (error) {
+    } catch (error: any) {
       if (this.mainConfig.debug.enabled) logger.warn(`[pixiv] 获取插画详情失败 (PID: ${pid}):`, error.response?.data || error.message);
       return null;
     }
@@ -123,7 +123,7 @@ class PixivApiService {
           timeout: this.mainConfig.requestTimeout * 1000,
           headers: { 'Referer': 'https://www.pixiv.net/' }
       });
-    } catch (error) {
+    } catch (error: any) {
       return null;
     }
   }
@@ -174,8 +174,8 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
         return { details };
       }
 
-      let firstImageBuffer: Buffer;
-      let firstImageType: string;
+      let firstImageBuffer: Buffer | undefined;
+      let firstImageType = 'image/jpeg';
       const additionalImages: h[] = [];
       const botUser = await this.ctx.bots[0]?.getSelf();
 
@@ -208,7 +208,7 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
       }
 
       return { details, imageBuffer: firstImageBuffer, imageType: firstImageType, additionalImages };
-    } catch (error) {
+    } catch (error: any) {
       logger.error(`[pixiv] 获取图源信息 (ID: ${postId}) 时发生错误:`, error);
       return null;
     }

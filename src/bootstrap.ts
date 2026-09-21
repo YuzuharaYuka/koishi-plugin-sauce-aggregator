@@ -9,6 +9,7 @@ import { TraceMoe } from './searchers/tracemoe'
 import { IQDB } from './searchers/iqdb'
 import { Yandex } from './searchers/yandex'
 import { Ascii2D } from './searchers/ascii2d'
+import { GoogleLens } from './searchers/googlelens'
 import { SoutuBot } from './searchers/soutubot'
 import { YandeReEnhancer } from './enhancers/yande'
 import { KonachanEnhancer } from './enhancers/konachan'
@@ -23,7 +24,8 @@ const logger = new Logger('sauce-aggregator')
 
 // Enhancer 初始化元数据与验证器
 interface EnhancerMetadata {
-  constructor: new (ctx: Context, config: Config, subConfig: unknown, puppeteerManager?: PuppeteerManager) => Enhancer
+  // subConfig 用 any：各增强器的泛型参数不同，用 unknown 会因逆变而不兼容
+  constructor: new (ctx: Context, config: Config, subConfig: any, puppeteerManager?: PuppeteerManager) => Enhancer
   needsKeys: boolean
   /** 缺少凭据时用于提示的说明文字，需自带反引号 */
   keyLabel: string
@@ -100,19 +102,21 @@ export function initializeSearchers(
     logger.info('[bootstrap] [saucenao] 未配置有效的 `API Key`，引擎已禁用。')
   }
 
-  const basicSearchers = { tracemoe: TraceMoe, iqdb: IQDB }
-  // soutubot 直接调用站点搜索接口，不需要浏览器实例
-  const puppeteerSearchers = { yandex: Yandex, ascii2d: Ascii2D }
-
-  for (const [name, Ctor] of Object.entries(basicSearchers)) {
-    allSearchers[name] = new Ctor(ctx, config, config[name])
-  }
-
+  // 逐个显式实例化：各引擎的配置类型不同，用循环 + 字符串索引会丢失类型信息
+  allSearchers.tracemoe = new TraceMoe(ctx, config, config.tracemoe)
+  allSearchers.iqdb = new IQDB(ctx, config, config.iqdb)
   allSearchers.soutubot = new SoutuBot(ctx, config, config.soutubot)
 
-  for (const [name, Ctor] of Object.entries(puppeteerSearchers)) {
-    allSearchers[name] = new Ctor(ctx, config, config[name], puppeteerManager)
+  // Google Lens 通过 SerpApi 调用，同样是纯 HTTP 引擎，不需要浏览器实例
+  if (config.googlelens.apiKeys?.filter(Boolean).length > 0) {
+    allSearchers.googlelens = new GoogleLens(ctx, config, config.googlelens)
+  } else {
+    logger.info('[bootstrap] [googlelens] 未配置有效的 `SerpApi API Key`，引擎已禁用。')
   }
+
+  // 需要浏览器实例的引擎
+  allSearchers.yandex = new Yandex(ctx, config, config.yandex, puppeteerManager)
+  allSearchers.ascii2d = new Ascii2D(ctx, config, config.ascii2d, puppeteerManager)
 
   return allSearchers
 }

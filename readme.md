@@ -6,7 +6,7 @@
 
 ## 功能
 
-- **多引擎搜索**：支持 [SauceNAO](https://saucenao.com/)、[IQDB](https://www.iqdb.org/)、[Trace.moe](https://trace.moe/)、[搜图bot酱](https://soutubot.moe/)、[Ascii2D](https://ascii2d.net/) 和 [Yandex](https://ya.ru/)。
+- **多引擎搜索**：支持 [SauceNAO](https://saucenao.com/)、[IQDB](https://www.iqdb.org/)、[Trace.moe](https://trace.moe/)、[搜图bot酱](https://soutubot.moe/)、[Ascii2D](https://ascii2d.net/)、[Yandex](https://ya.ru/) 和 [Google Lens](https://lens.google.com/)。
 - **图源增强**：当搜索结果来自 [Pixiv](https://www.pixiv.net/)、[Danbooru](https://danbooru.donmai.us/)、[Gelbooru](https://gelbooru.com/)、[Yande.re](https://yande.re/post)、[Konachan](https://konachan.com/post) 时，可获取作品详情、标签及原图。
 - **搜索策略**：
   - **串行模式**：按顺序调用引擎，在找到高相似度结果后停止，资源占用较低。
@@ -25,8 +25,9 @@
 
 | 依赖项 | 引擎 | 图源 |
 | :--- | :--- | :--- |
-| **API 密钥/凭据** | `SauceNAO` | `Gelbooru`, `Danbooru`, `Pixiv` |
+| **API 密钥/凭据** | `SauceNAO`, `Google Lens` | `Gelbooru`, `Danbooru`, `Pixiv` |
 | **浏览器环境 (Puppeteer)** | `Yandex`, `Ascii2D` | - |
+| **公网图片链接** | `Google Lens` | - |
 
 ## 指令说明
 
@@ -38,7 +39,7 @@
 - **选项**:
   - `--all` / `-a`: 强制搜索所有已启用的引擎。
 - **引擎别名**:
-  - `saucenao (s)`, `iqdb (i)`, `tracemoe (t)`, `soutubot (b)`, `ascii2d (a)`, `yandex (y)`
+  - `saucenao (s)`, `iqdb (i)`, `tracemoe (t)`, `soutubot (b)`, `ascii2d (a)`, `yandex (y)`, `googlelens (g)`
 
 #### 使用示例
 
@@ -133,6 +134,21 @@ sauce b [图片]  # b 是 soutubot 的别名
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `alwaysAttach` | `boolean` | `false` | 总是附加 Ascii2D 结果。 |
+
+#### Google Lens
+
+通过 **[SerpApi](https://serpapi.com/)** 调用 Google Lens，**不需要浏览器环境**，但只能搜索**公网图片链接**（QQ 等平台发送的图片自带公网直链，可直接使用）。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `apiKeys` | `string[]` | `[]` | SerpApi API Key 列表。免费额度较少（100 次/月），可填多个 Key 轮询，额度耗尽的 Key 会自动跳过。 |
+| `alwaysAttach` | `boolean` | `false` | 开启后即使已找到高匹配度结果也一并展示；关闭时仅在未找到高匹配度结果时作为补充展示。 |
+| `hl` | `'zh-cn' \| 'zh-tw' \| 'ja' \| 'en'` | `zh-cn` | 结果语言，影响标题语言与来源站点覆盖。 |
+| `maxResults` | `number` | `5` | 最大结果数。同一站点的结果会自动去重，每个站点只保留最靠前的一条。 |
+
+> **附加引擎说明**：`Yandex`、`Ascii2D`、`Google Lens` 均为补充引擎，不参与「找到高匹配度即停止」的判定，相似度固定为 0。
+> 它们的展示时机由各自的 `alwaysAttach` 决定：关闭时仅在未找到高匹配度结果时补位，开启时任何情况都会展示。
+> 单引擎搜索（`sauce g [图片]`）时只执行指定引擎；`--all` 全量搜索会执行所有已启用引擎（含补充引擎），不受 `alwaysAttach` 影响。
 
 ---
 

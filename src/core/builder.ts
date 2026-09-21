@@ -74,7 +74,7 @@ export async function buildHighConfidenceMessage(
   result: SearcherResult.Result,
   engineName: SearchEngineName,
   botUser: Universal.User,
-  enhancedData?: EnhancedResult
+  enhancedData?: EnhancedResult | null
 ) {
   if (result.coverImage) {
     figureMessage.children.push(
@@ -101,14 +101,15 @@ export async function buildHighConfidenceMessage(
   if (enhancedData) {
     if (enhancedData.imageBuffer) {
       figureMessage.children.push(
-        h('message', { nickname: MESSAGE_TITLES.IMAGE, avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType))
+        h('message', { nickname: MESSAGE_TITLES.IMAGE, avatar: botUser.avatar }, h.image(enhancedData.imageBuffer, enhancedData.imageType || 'image/jpeg'))
       )
     }
     const enhancedDetailsNode = h('message', { nickname: MESSAGE_TITLES.INFO, avatar: botUser.avatar }, enhancedData.details)
     figureMessage.children.push(enhancedDetailsNode)
 
-    if (enhancedData.additionalImages?.length > 0) {
-      figureMessage.children.push(...enhancedData.additionalImages)
+    const additionalImages = enhancedData.additionalImages
+    if (additionalImages?.length) {
+      figureMessage.children.push(...additionalImages)
     }
   }
 }

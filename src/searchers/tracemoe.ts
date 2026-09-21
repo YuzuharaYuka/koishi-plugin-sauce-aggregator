@@ -1,5 +1,6 @@
 import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, TraceMoe as TraceMoeConfig, SearchEngineName } from '../config'
+import { errorMessage } from '../utils'
 
 // TraceMoe 搜索器：调用 API 并格式化返回结果
 const logger = new Logger('sauce-aggregator')
@@ -54,7 +55,7 @@ export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
 
     } catch (error) {
       // 捕获并记录错误，尽量提供调试信息
-      logger.warn(`[tracemoe] 请求出错: ${error.message}`)
+      logger.warn(`[tracemoe] 请求出错: ${errorMessage(error)}`)
       if (this.mainConfig.debug.enabled && (error as any).response) {
         logger.debug(`[tracemoe] 响应状态: ${(error as any).response.status}`, `响应数据: ${JSON.stringify((error as any).response.data)}`)
       }

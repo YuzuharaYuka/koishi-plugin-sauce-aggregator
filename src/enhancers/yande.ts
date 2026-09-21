@@ -88,7 +88,7 @@ export class YandeReEnhancer extends Enhancer<YandeReConfig.Config> {
       const imageType = getImageTypeFromUrl(downloadUrl)
 
       return { details, imageBuffer, imageType }
-    } catch (error) {
+    } catch (error: any) {
       logger.error(`[yande.re] 获取图源信息 (ID: ${postId}) 时发生错误:`, error.message)
       return null
     }

@@ -18,6 +18,28 @@ export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
 let pluginVersion: string | null = null
 
 /**
+ * 从 catch 到的未知值中安全取出错误信息。
+ * 启用 strict 后 catch 变量类型为 unknown，不能直接访问 .message。
+ */
+export function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return String(error)
+}
+
+/** 从 catch 到的未知值中安全取出错误名（如 TimeoutError / AbortError） */
+export function errorName(error: unknown): string {
+  if (error && typeof error === 'object' && 'name' in error) return String((error as { name?: unknown }).name ?? '')
+  return ''
+}
+
+/** 判断是否为「响应不是有效 JSON」这类解析错误（腾讯/部分适配器会直接抛字符串） */
+export function isJsonParseError(error: unknown): boolean {
+  if (typeof error === 'string') return /not valid JSON|Unexpected token/i.test(error)
+  return /not valid JSON|Unexpected token/i.test(errorMessage(error))
+}
+
+/**
  * 读取插件自身版本号（用于拼接 User-Agent 等）。
  * 直接读取 package.json，因此无需任何构建步骤即可跟随版本变化。
  */
@@ -72,7 +94,7 @@ const ERROR_HANDLERS: readonly ErrorHandler[] = [
     message: '请求过于频繁 (429)，请稍后再试。',
   },
   {
-    check: (e) => e.response?.status && e.response.status >= 500,
+    check: (e) => !!e.response?.status && e.response.status >= 500,
     message: (e) => `服务提供方服务器错误 (${e.response?.status})，请稍后再试。`,
   },
   {
@@ -298,7 +320,7 @@ async function streamToBuffer(
   if (stream && typeof stream.getReader === 'function') {
     const reader = stream.getReader()
     let stalled = false
-    let idleTimer: NodeJS.Timeout
+    let idleTimer: NodeJS.Timeout | undefined
     const arm = () => {
       clearTimeout(idleTimer)
       idleTimer = setTimeout(() => {
@@ -331,7 +353,7 @@ async function streamToBuffer(
   // Node 流
   if (stream && typeof stream.on === 'function') {
     await new Promise<void>((resolve, reject) => {
-      let idleTimer: NodeJS.Timeout
+      let idleTimer: NodeJS.Timeout | undefined
       const arm = () => {
         clearTimeout(idleTimer)
         idleTimer = setTimeout(() => {

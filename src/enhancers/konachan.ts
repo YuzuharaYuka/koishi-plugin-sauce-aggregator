@@ -133,7 +133,7 @@ export class KonachanEnhancer extends Enhancer<KonachanConfig.Config> {
       const imageType = getImageTypeFromUrl(downloadUrl)
 
       return { details, imageBuffer: Buffer.from(imageBuffer), imageType }
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[konachan] 获取图源信息 (ID: ${postId}) 时发生错误: ${errorMessage}`)
       if (this.mainConfig.debug.enabled) {

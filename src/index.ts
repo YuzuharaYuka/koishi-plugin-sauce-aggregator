@@ -35,15 +35,16 @@ export const usage = `
 
 #### 可用引擎 (及其别名):
 *	**[saucenao](https://saucenao.com/) (s)** : 识别动漫、插画和漫画图片等。
-*	**[iqdb](https://www.iqdb.org/) (i)** : 从多个图源网站识别动漫、漫画、游戏图片和壁纸。
+*	**[iqdb](https://www.iqdb.org/) (i)** : 从图源网站识别动漫、漫画、游戏图片和壁纸。
 *	**[tracemoe](https://trace.moe/) (t)** : 识别番剧截图，提供番剧信息、集数、时间轴与视频预览。
 *	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，使用完整或局部图识别nh或eh本子，下载nh本子可使用[nhentai-downloader](/market?keyword=nhentai-downloader)插件。
 *	**[ascii2d](https://ascii2d.net/) (a)** : 二次元画像詳細検索，作为补充结果。
 *	**[yandex](https://ya.ru/) (y)** : 识别网络媒体或网站中存在的特征相似图片并返回来源，主要作为补充结果。
+*	**[googlelens](https://lens.google.com/) (g)** : 谷歌以图搜图，覆盖全网来源，主要作为补充结果，需配置 **[SerpApi](https://serpapi.com/)** Key。
 
 #### 可用图源
 *	**[yandere](https://yande.re/post)** : 动漫和游戏插画图站，高清壁纸和原画。
-*	**[konachan](https://konachan.com/post)** : 动漫壁纸站，专注于高质量壁纸。
+*	**[konachan](https://konachan.com/post)** : 动漫壁纸站。
 *	**[gelbooru](https://gelbooru.com/index.php?page=post&s=list&tags=all)** : 综合性动漫图站，插画、漫画和同人作品。
 *	**[danbooru](https://danbooru.donmai.us/)** : 动漫艺术网站，标签详尽元数据丰富。
 *	**[pixiv](https://www.pixiv.net/)** : 艺术家原创插画、漫画分享社区。
@@ -52,9 +53,7 @@ export const usage = `
 ###	注意：
 *	部分引擎可能需要配置代理才可用，**http** 相关报错请先检查代理网络设置。
 *	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
-*	\`saucenao\` 引擎，\`gelbooru\` 、\`danbooru\` 、\`pixiv\` 图源需要配置 API Key 或 Token 才可用。
-*	\`soutubot\` 引擎为直接接口调用，会自动使用下方的独立代理，无需浏览器实例。
-*	\`yandex\` 、\`ascii2d\` 引擎需要启动浏览器实例才可用，如果服务器性能不足可以考虑关闭或者设置自动关闭延迟。
+*	\`saucenao\` 、\`googlelens\`引擎，\`gelbooru\` 、\`danbooru\` 、\`pixiv\` 图源需要配置 API Key 或 Token 才可用。
 `
 
 export function apply(ctx: Context, config: Config) {
@@ -99,13 +98,16 @@ export function apply(ctx: Context, config: Config) {
       '',
       '可通过指定引擎名或别名来使用特定引擎进行搜索。',
       '可用引擎 (及其别名):',
-      'saucenao(s), iqdb(i), tracemoe(t), soutubot(b), ascii2d(a), yandex(y)',
+      'saucenao(s), iqdb(i), tracemoe(t), soutubot(b), ascii2d(a), yandex(y), googlelens(g)',
     ].join('\n'))
     .example('sauce [图片]  (默认模式搜索)')
     .example('sauce -a [图片]  (搜索所有可用引擎)')
     .example('sauce saucenao [图片]  (使用 SauceNAO 搜索)')
     .example('sauce a [图片]  (使用 ascii2d 搜索)')
     .action(async ({ session, options }, text) => {
+      // session 由框架保证存在，这里仅为满足 strict 类型收窄
+      if (!session) return
+
       // 解析指令参数
       const { searchersToUse, imageInputText, isSingleEngineSpecified } = commandHandler.parseCommandInput(text)
 
@@ -134,7 +136,7 @@ export function apply(ctx: Context, config: Config) {
           commandHandler,
           allEnabledSearchers,
           searchersToUse,
-          options,
+          options: options ?? {},
           config,
           botUser,
           session,

@@ -2,6 +2,7 @@
 
 import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, Yandex as YandexConfig, SearchEngineName } from '../config'
+import { errorMessage, errorName } from '../utils'
 import type { PuppeteerManager } from '../puppeteer'
 import type { Page } from 'puppeteer-core'
 
@@ -80,14 +81,15 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
         } catch (error) {
             // 捕获并封装为用户友好的错误信息
-            logger.warn(`[yandex] 请求或解析出错: ${error.message}`)
+            const message = errorMessage(error)
+            logger.warn(`[yandex] 请求或解析出错: ${message}`)
             if (this.mainConfig.debug.enabled) await this.puppeteer.saveErrorSnapshot(page, this.name)
 
             let friendlyMessage = 'Yandex 搜索失败。'
-            if (error.name === 'TimeoutError' || /timeout/i.test(error.message)) {
+            if (errorName(error) === 'TimeoutError' || /timeout/i.test(message)) {
                 friendlyMessage += '页面加载超时，可能是网络或代理问题。'
             } else {
-                friendlyMessage += `内部错误: ${error.message}`
+                friendlyMessage += `内部错误: ${message}`
             }
             throw new Error(friendlyMessage)
         } finally {
@@ -160,7 +162,7 @@ export class Yandex extends Searcher<YandexConfig.Config> {
                 return true
             }
         } catch (e) {
-            if (this.mainConfig.debug.enabled) logger.warn('[yandex] 上传流程失败: ' + (e.message || e))
+            if (this.mainConfig.debug.enabled) logger.warn('[yandex] 上传流程失败: ' + (errorMessage(e) || e))
             return false
         }
 

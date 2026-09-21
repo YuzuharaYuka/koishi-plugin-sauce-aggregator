@@ -33,7 +33,7 @@ export class PuppeteerManager {
     private _activePages = 0;
 
     private readonly _provider: 'internal' | 'global';
-    private readonly _globalPuppeteer: GlobalPuppeteer;
+    private readonly _globalPuppeteer: GlobalPuppeteer | undefined;
 
     constructor(ctx: Context, config: Config, globalPuppeteer?: GlobalPuppeteer) {
         this.ctx = ctx;
@@ -56,7 +56,7 @@ export class PuppeteerManager {
             this._isInitialized = true;
             this._scheduleRestart();
             logger.info('[puppeteer] 常驻浏览器实例已成功预初始化。');
-        } catch (error) {
+        } catch (error: any) {
             logger.error('[puppeteer] 预初始化常驻浏览器实例失败:', error);
         }
     }
@@ -80,7 +80,7 @@ export class PuppeteerManager {
             logger.info(`[puppeteer] 自动检测到浏览器路径: ${browserPath}`);
             this._browserPath = browserPath;
             return browserPath;
-        } catch (error) {
+        } catch (error: any) {
             logger.warn('[puppeteer] puppeteer-finder 未能找到任何浏览器:', error);
             return null;
         }
@@ -170,7 +170,7 @@ export class PuppeteerManager {
                 });
                 this._browserPromise = null;
                 return browser;
-            } catch (error) {
+            } catch (error: any) {
                 logger.error('[puppeteer] 启动浏览器实例时发生严重错误:', error.message);
                 this._browser = null;
                 this._browserPromise = null;
@@ -235,7 +235,7 @@ export class PuppeteerManager {
             await this.dispose();
             await this.ensureBrowserIsReady();
             logger.info('[puppeteer] 浏览器计划性重启成功。');
-        } catch (error) {
+        } catch (error: any) {
             logger.error('[puppeteer] 浏览器计划性重启失败:', error.message);
         } finally {
             this._scheduleRestart();
@@ -250,7 +250,7 @@ export class PuppeteerManager {
                 throw new Error('Browser has been closed');
             }
             return await this._globalPuppeteer.page();
-        } catch (error) {
+        } catch (error: any) {
             if (error.message.includes('连接已断开') || error.message.includes('Browser has been closed') || error.message.includes('Session closed') || !this._globalPuppeteer.browser?.isConnected()) {
                 logger.warn('[puppeteer] 全局 Puppeteer 服务连接已断开，尝试自动恢复...');
                 try {
@@ -262,7 +262,7 @@ export class PuppeteerManager {
                     } else {
                         throw new Error('Global puppeteer service does not support manual reconnection.');
                     }
-                } catch (recoveryError) {
+                } catch (recoveryError: any) {
                     logger.error('[puppeteer] 全局 Puppeteer 服务恢复失败:', recoveryError);
                     throw new Error(`全局浏览器服务恢复失败: ${recoveryError.message}`);
                 }
@@ -278,7 +278,7 @@ export class PuppeteerManager {
             try {
                 await this.setupPage(page);
                 return page;
-            } catch (error) {
+            } catch (error: any) {
                 await page.close().catch(() => { });
                 throw error;
             }
@@ -297,7 +297,7 @@ export class PuppeteerManager {
 
             try {
                 await this.setupPage(page);
-            } catch (error) {
+            } catch (error: any) {
                 await page.close().catch(() => { });
                 this._activePages--;
                 if (this._activePages === 0 && !this.config.puppeteer.persistentBrowser) {
@@ -314,7 +314,7 @@ export class PuppeteerManager {
             });
 
             return page;
-        } catch (error) {
+        } catch (error: any) {
             logger.error('[puppeteer] 获取新页面时发生严重错误:', formatNetworkError(error));
             throw error;
         }
@@ -392,7 +392,7 @@ export class PuppeteerManager {
                 if (this.config.debug.enabled) logger.info('[puppeteer] 检测到 Cloudflare 页面 (基于可见文本内容)。');
                 return true;
             }
-        } catch (error) {
+        } catch (error: any) {
             if (this.config.debug.enabled) logger.warn('[puppeteer] Cloudflare 检测时发生错误:', error.message);
         }
         return false;
@@ -441,7 +441,7 @@ export class PuppeteerManager {
                     if (this.config.debug.enabled) logger.info('[puppeteer] 关闭正在启动的浏览器实例...');
                     await browser.close();
                 }
-            } catch (error) {
+            } catch (error: any) {
                 logger.warn('[puppeteer] 关闭正在启动的浏览器实例时发生错误:', error.message);
             }
         }
@@ -453,9 +453,10 @@ export class PuppeteerManager {
                     await browserToClose.close();
                     if (this.config.debug.enabled) logger.info('[puppeteer] 浏览器实例已成功关闭。');
                 }
-            } catch (error) {
+            } catch (error: any) {
                 logger.warn('[puppeteer] 关闭浏览器实例时发生错误:', error.message);
             }
         }
     }
 }
+

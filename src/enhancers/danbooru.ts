@@ -77,7 +77,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
         if (!gotScraping) {
           throw new Error('got-scraping 导入失败：未找到 gotScraping 导出');
         }
-      } catch (error) {
+      } catch (error: any) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`[danbooru] 导入 got-scraping 失败: ${errorMessage}`);
         throw new Error(`无法导入 got-scraping，请检查依赖是否正确安装: ${errorMessage}`);
@@ -177,7 +177,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
         const imageType = getImageTypeFromUrl(post.file_url);
         return { details, imageBuffer, imageType };
 
-    } catch (error) {
+    } catch (error: any) {
       // makeApiRequest 已给出可操作的错误描述，这里只做记录与包装
       const errorMessage = error.name === 'TimeoutError'
           ? `请求超时 (${this.mainConfig.requestTimeout}秒)`
@@ -234,7 +234,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
     let post: DanbooruPost;
     try {
         post = await got.get(url, requestOptions).json<DanbooruPost>();
-    } catch (error) {
+    } catch (error: any) {
         throw new Error(this.describeRequestError(error));
     }
 
@@ -333,7 +333,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
       info.push(`原始来源: ${post.source}`);
     }
 
-    const metaTags = formatTags(post.tag_string_meta);
+    const metaTags = formatTags(post.tag_string_meta || '');
     if (metaTags) info.push(`元标签: ${metaTags}`);
 
     const allTags = (post.tag_string_general || '').split(' ').map(tag => tag.replace(/_/g, ' ')).filter(Boolean);

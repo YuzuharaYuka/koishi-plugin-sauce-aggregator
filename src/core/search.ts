@@ -2,7 +2,7 @@
 
 import { Context, h, Logger, Session, Universal } from 'koishi'
 import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer, EnhancedResult } from '../config'
-import { SEARCH_ENGINES, ENHANCER_PATTERNS, ENHANCEMENT_ID_EXTRACTORS, SPECIAL_ENGINES, SEARCH_FILTERS, SEARCH_MESSAGES, MESSAGE_TITLES } from '../constants'
+import { SEARCH_ENGINES, ENHANCER_PATTERNS, ENHANCEMENT_ID_EXTRACTORS, SPECIAL_ENGINES, SEARCH_FILTERS, SEARCH_MESSAGES, MESSAGE_TITLES, isAlwaysAttach } from '../constants'
 import * as MessageBuilder from './builder'
 import { Semaphore } from './semaphore'
 import { PuppeteerManager } from '../puppeteer'
@@ -179,8 +179,8 @@ export class SearchHandler {
 
       if (output.results.length === 0) continue
       const engineConfig = this.config[output.engine] as { confidenceThreshold?: number }
-      const threshold =
-        (engineConfig?.confidenceThreshold > 0) ? engineConfig.confidenceThreshold : this.config.confidenceThreshold
+      const thresholdConfig = engineConfig?.confidenceThreshold ?? 0
+      const threshold = thresholdConfig > 0 ? thresholdConfig : this.config.confidenceThreshold
 
       const high: SearcherResult.Result[] = []
       const low: SearcherResult.Result[] = []
@@ -290,7 +290,7 @@ export class SearchHandler {
   ): Promise<void> {
     const executedOutputs: SearchOutput[] = []
     let highConfidenceResults: SearcherResult.Result[] = []
-    let highConfidenceSearcherName: SearchEngineName = null
+    let highConfidenceSearcherName: SearchEngineName | null = null
     const executedEngineNames = new Set<SearchEngineName>()
 
     for (const searcher of searchers) {
@@ -300,8 +300,8 @@ export class SearchHandler {
       if (output[0].results.length > 0) executedOutputs.push(output[0])
 
       const engineConfig = this.config[searcher.name] as { confidenceThreshold?: number }
-      const threshold =
-        (engineConfig?.confidenceThreshold > 0) ? engineConfig.confidenceThreshold : this.config.confidenceThreshold
+      const thresholdConfig = engineConfig?.confidenceThreshold ?? 0
+      const threshold = thresholdConfig > 0 ? thresholdConfig : this.config.confidenceThreshold
 
       const foundResults = output[0].results.filter((r) => r.similarity >= threshold)
       if (foundResults.length > 0) {
@@ -337,7 +337,7 @@ export class SearchHandler {
           this.ctx,
           this.config,
           result,
-          highConfidenceSearcherName,
+          highConfidenceSearcherName!,
           botUser,
           enhancedResult
         )
@@ -345,10 +345,7 @@ export class SearchHandler {
       await MessageBuilder.sendFigureMessage(session, figureMessage, '发送高匹配度结果失败')
 
       const attachEngines = this.allEnabledSearchers.filter(
-        (s) =>
-          ((s.name === SPECIAL_ENGINES.YANDEX && this.config.yandex.alwaysAttach) ||
-            (s.name === SPECIAL_ENGINES.ASCII2D && this.config.ascii2d.alwaysAttach)) &&
-          !executedEngineNames.has(s.name)
+        (s) => isAlwaysAttach(this.config, s.name) && !executedEngineNames.has(s.name)
       )
       const attachOutputs = await this.executeSearch(attachEngines, options)
       attachOutputs.forEach((o) => {
@@ -401,10 +398,12 @@ export class SearchHandler {
     const abortController = new AbortController()
     const { signal } = abortController
 
+    // 任一附加引擎开启了「总是附加」时，不能提前中止搜索
+    const hasAlwaysAttachEngine = SEARCH_ENGINES.ATTACH.some((name) => isAlwaysAttach(this.config, name))
+
     const isFastFirstMode =
       this.config.search.parallelHighConfidenceStrategy === 'first' &&
-      !this.config.yandex.alwaysAttach &&
-      !this.config.ascii2d.alwaysAttach
+      !hasAlwaysAttachEngine
 
     let highConfidenceSent = false
     const lowConfidenceOutputs: SearchOutput[] = []
@@ -448,8 +447,8 @@ export class SearchHandler {
       }
 
       const engineConfig = this.config[searcher.name] as { confidenceThreshold?: number }
-      const threshold =
-        (engineConfig?.confidenceThreshold > 0) ? engineConfig.confidenceThreshold : this.config.confidenceThreshold
+      const thresholdConfig = engineConfig?.confidenceThreshold ?? 0
+      const threshold = thresholdConfig > 0 ? thresholdConfig : this.config.confidenceThreshold
       const highConfidenceResults = output.results.filter((r) => r.similarity >= threshold)
 
       if (highConfidenceResults.length > 0) {
@@ -524,8 +523,7 @@ export class SearchHandler {
     const enabledMainEngines = searchers.filter((s) => SEARCH_ENGINES.MAIN.includes(s.name as any))
     if (
       !isFastFirstMode &&
-      !this.config.yandex.alwaysAttach &&
-      !this.config.ascii2d.alwaysAttach &&
+      !hasAlwaysAttachEngine &&
       enabledMainEngines.every((s) => completedMainEngines.has(s.name))
     ) {
       if (!signal.aborted) abortController.abort()
@@ -537,7 +535,8 @@ export class SearchHandler {
     if (!highConfidenceSent && lowConfidenceOutputs.length > 0) {
       const finalLowConfidence = lowConfidenceOutputs.filter((o) => {
         const wasAborted = results.find((r) => r.status === 'rejected' && r.reason?.name === 'AbortError')
-        return !(wasAborted && (o.engine === SPECIAL_ENGINES.YANDEX || o.engine === SPECIAL_ENGINES.ASCII2D))
+        // 因提前中止而未跑完的附加引擎结果不展示
+        return !(wasAborted && SEARCH_ENGINES.ATTACH.includes(o.engine as any))
       })
 
       if (finalLowConfidence.length > 0 && this.config.maxResults > 0) {
@@ -562,3 +561,4 @@ export class SearchHandler {
     }
   }
 }
+

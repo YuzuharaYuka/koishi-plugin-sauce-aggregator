@@ -8,8 +8,8 @@ import { USER_AGENT } from '../utils'
 // IQDB 搜索器：提交图片并解析 HTML 结果（使用 cheerio）
 const logger = new Logger('sauce-aggregator')
 
-// 修正链接为完整地址
-function fixedHref(href: string): string {
+// 修正链接为完整地址（属性可能缺失，容许 undefined）
+function fixedHref(href?: string): string {
   if (!href) return ''
   if (href.startsWith('//')) return 'https:' + href
   if (href.startsWith('/')) return 'https://iqdb.org' + href
@@ -158,14 +158,14 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
         const altText = $div.find('.image img').attr('alt') || ''
         const props = parseImageProperties(altText)
         if (props.score) details.push(`评分: ${props.score}`)
-        if (props.tags?.length > 0) details.push(`标签: ${props.tags.join(' ')}`)
+        if (props.tags && props.tags.length > 0) details.push(`标签: ${props.tags.join(' ')}`)
 
         let primarySource = '未知来源'
         if ($sourceCell) {
           const text = $sourceCell.clone().children().remove().end().text().trim()
           if (text) primarySource = text
 
-          $sourceCell.find('a').each((_, el) => {
+          $sourceCell.find('a').each((_: number, el: any) => {
             const $a = $(el)
             const href = $a.attr('href')
             if (href) {

@@ -6,7 +6,7 @@ import { Buffer } from 'buffer'
 
 
 // 支持的搜图引擎标识
-export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'soutubot'
+export type SearchEngineName = 'saucenao' | 'iqdb' | 'tracemoe' | 'yandex' | 'ascii2d' | 'googlelens' | 'soutubot'
 // 支持的图源增强器标识
 export type EnhancerName = 'yandere' | 'gelbooru' | 'danbooru' | 'pixiv' | 'konachan'
 
@@ -135,6 +135,7 @@ export interface Config {
   gelbooru: Gelbooru.Config
   danbooru: Danbooru.Config
   ascii2d: Ascii2D.Config
+  googlelens: GoogleLens.Config
   soutubot: SoutuBot.Config
   pixiv: Pixiv.Config
 }
@@ -148,6 +149,19 @@ export namespace Konachan { export interface Config { postQuality: 'jpeg' | 'sam
 export namespace Gelbooru { export interface Config { keyPairs: { userId: string; apiKey: string }[]; postQuality: 'original' | 'sample' | 'preview'; maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'; enableLinkParsing: boolean; } }
 export namespace Danbooru { export interface Config { keyPairs: { username: string; apiKey: string }[]; postQuality: 'original' | 'sample' | 'preview'; maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'; enableLinkParsing: boolean; userAgentId?: string; } }
 export namespace Ascii2D { export interface Config { alwaysAttach: boolean; } }
+
+export namespace GoogleLens {
+  export interface Config {
+    /** SerpApi 的 API Key 列表，支持多 Key 轮询 */
+    apiKeys: string[]
+    /** 总是附加结果：开启后即使已找到高匹配度结果也一并展示 */
+    alwaysAttach: boolean
+    /** 结果语言，影响标题语言与来源站点覆盖 */
+    hl: 'zh-cn' | 'zh-tw' | 'en' | 'ja'
+    /** 返回的最大结果数 */
+    maxResults: number
+  }
+}
 export namespace SoutuBot {
   export interface Config {
     confidenceThreshold?: number
@@ -194,16 +208,17 @@ export const Config: Schema<Config> = Schema.intersect([
   // ==================== 基础设置 ====================
   Schema.object({
     order: Schema.array(Schema.object({
-      engine: Schema.union(['saucenao', 'iqdb', 'tracemoe', 'soutubot', 'yandex', 'ascii2d']).description('搜图引擎'),
+      engine: Schema.union(['saucenao', 'iqdb', 'tracemoe', 'soutubot', 'yandex', 'ascii2d', 'googlelens']).description('搜图引擎'),
       enabled: Schema.boolean().default(true).description('是否启用'),
     }))
       .role('table')
       .default([
         { engine: 'saucenao', enabled: true }, { engine: 'iqdb', enabled: true }, { engine: 'tracemoe', enabled: true },
         { engine: 'soutubot', enabled: true }, { engine: 'ascii2d', enabled: true }, { engine: 'yandex', enabled: true },
+        { engine: 'googlelens', enabled: true },
       ])
       .description('搜图引擎。将按顺序调用，找到高匹配度结果后即停止（除非使用 --all或并行搜索）。<br>' +
-        '\`Yandex\` 和 \`Ascii2D\` 仅作为附加结果使用'),
+        '\`Yandex\`、\`Ascii2D\` 和 \`Google Lens\` 仅作为附加结果使用'),
     enhancerOrder: Schema.array(Schema.object({
       engine: Schema.union(['gelbooru', 'yandere', 'danbooru', 'pixiv', 'konachan']).description('图源'),
       enabled: Schema.boolean().default(true).description('是否启用'),
@@ -271,8 +286,7 @@ export const Config: Schema<Config> = Schema.intersect([
       confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值 (%)'),
     }).description('IQDB 设置'),
     soutubot: Schema.object({
-      confidenceThreshold: Schema.number().min(0).max(100).default(28).description('独立高匹配度阈值 (%)<br>' +
-        '低于28%为低相似度结果'),
+      confidenceThreshold: Schema.number().min(0).max(100).default(60).description('独立高匹配度阈值 (%)'),
       maxHighConfidenceResults: Schema.number().min(1).max(10).default(3).description('高匹配度结果的最大显示数量'),
       searchMode: Schema.union([
         Schema.const('normal').description('常规'),
@@ -296,8 +310,27 @@ export const Config: Schema<Config> = Schema.intersect([
       ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名'),
     }).description('Yandex 设置'),
     ascii2d: Schema.object({
-        alwaysAttach: Schema.boolean().default(false).description('总是附加 Ascii2D 结果'),
+        alwaysAttach: Schema.boolean().default(false).description('总是附加\`Ascii2D`\结果'),
     }).description('Ascii2D 设置'),
+    googlelens: Schema.object({
+      apiKeys: Schema.array(Schema.string().role('secret')).default([]).description(
+        '**SerpApi API Key 列表**<br>' +
+        'Google Lens 需通过 **[SerpApi](https://serpapi.com/)** 调用，' +
+        '注册后在 [Dashboard](https://serpapi.com/manage-api-key) 获取 Key<br>' +
+        '免费额度250 次/月，可填入多个 Key 轮询使用，额度耗尽的 Key 会自动跳过'),
+      alwaysAttach: Schema.boolean().default(false).description(
+        '总是附加\`Google Lens`\结果'),
+      hl: Schema.union([
+        Schema.const('zh-cn').description('简体中文'),
+        Schema.const('zh-tw').description('繁体中文'),
+        Schema.const('ja').description('日文'),
+        Schema.const('en').description('英文'),
+      ]).default('zh-cn').description('**结果语言**<br>' +
+        '影响结果标题的语言与来源站点的覆盖范围'),
+      maxResults: Schema.number().min(1).max(20).default(5).description(
+        '**最大结果数**<br>' +
+        '同一站点的结果会自动去重，每个站点只保留最靠前的一条'),
+    }).description('Google Lens 设置'),
   }).description('引擎配置'),
 
   // ==================== 图源配置 ====================
@@ -395,7 +428,7 @@ export const Config: Schema<Config> = Schema.intersect([
     debug: Schema.object({
       enabled: Schema.boolean().default(false).description('启用调试模式<br>' +
         '在控制台输出各引擎与图源的详细过程日志'),
-      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'soutubot', 'gelbooru', 'yandere', 'danbooru', 'pixiv', 'konachan']))
+      logApiResponses: Schema.array(Schema.union(['saucenao', 'iqdb', 'tracemoe', 'yandex', 'ascii2d', 'googlelens', 'soutubot', 'gelbooru', 'yandere', 'danbooru', 'pixiv', 'konachan']))
         .role('checkbox')
         .default([])
         .description('记录原始响应<br>' +

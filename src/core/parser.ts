@@ -143,8 +143,8 @@ export class LinkParser {
         figureMessage.children.push(
           h(
             'message',
-            { nickname: '图源图片', avatar: botUser.avatar },
-            h.image(enhancedResult.imageBuffer, enhancedResult.imageType)
+            { nickname: '图源图片', avatar: botUser?.avatar },
+            h.image(enhancedResult.imageBuffer, enhancedResult.imageType || 'image/jpeg')
           )
         )
       }
@@ -152,13 +152,14 @@ export class LinkParser {
       figureMessage.children.push(
         h(
           'message',
-          { nickname: '图源信息', avatar: botUser.avatar },
+          { nickname: '图源信息', avatar: botUser?.avatar },
           enhancedResult.details
         )
       )
 
-      if (enhancedResult.additionalImages?.length > 0) {
-        figureMessage.children.push(...enhancedResult.additionalImages)
+      const additionalImages = enhancedResult.additionalImages
+      if (additionalImages?.length) {
+        figureMessage.children.push(...additionalImages)
       }
 
       await session.send(figureMessage)
