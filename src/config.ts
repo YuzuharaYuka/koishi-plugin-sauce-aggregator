@@ -148,7 +148,15 @@ export namespace YandeRe { export interface Config { postQuality: 'jpeg' | 'samp
 export namespace Konachan { export interface Config { postQuality: 'jpeg' | 'sample' | 'original'; maxRating: 's' | 'q' | 'e'; enableLinkParsing: boolean; } }
 export namespace Gelbooru { export interface Config { keyPairs: { userId: string; apiKey: string }[]; postQuality: 'original' | 'sample' | 'preview'; maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'; enableLinkParsing: boolean; } }
 export namespace Danbooru { export interface Config { keyPairs: { username: string; apiKey: string }[]; postQuality: 'original' | 'sample' | 'preview'; maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'; enableLinkParsing: boolean; userAgentId?: string; } }
-export namespace Ascii2D { export interface Config { alwaysAttach: boolean; } }
+export namespace Ascii2D {
+  export interface Config {
+    alwaysAttach: boolean
+    /** 搜索失败（多为 Cloudflare 挑战或站点抖动）时的自动重试次数 */
+    retries: number
+    /** 提交后等待结果出现的额外秒数，用于容忍 Cloudflare 挑战 */
+    resolveTimeout: number
+  }
+}
 
 export namespace GoogleLens {
   export interface Config {
@@ -310,7 +318,12 @@ export const Config: Schema<Config> = Schema.intersect([
       ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名'),
     }).description('Yandex 设置'),
     ascii2d: Schema.object({
-        alwaysAttach: Schema.boolean().default(false).description('总是附加\`Ascii2D`\结果'),
+        alwaysAttach: Schema.boolean().default(false).description('总是附加\`Ascii2D\` 结果'),
+        retries: Schema.number().min(0).max(3).default(2).description('**失败重试次数**<br>' +
+          'Ascii2D 偶发 Cloudflare 挑战或响应缓慢，失败时自动重新导航并重试'),
+        resolveTimeout: Schema.number().min(10).max(180).default(60).description('**结果等待时间 (秒)**<br>' +
+          '提交图片后等待结果出现的额外时间，用于容忍 Cloudflare 挑战；' +
+          '与「全局网络请求超时」取较大值生效'),
     }).description('Ascii2D 设置'),
     googlelens: Schema.object({
       apiKeys: Schema.array(Schema.string().role('secret')).default([]).description(
@@ -319,7 +332,7 @@ export const Config: Schema<Config> = Schema.intersect([
         '注册后在 [Dashboard](https://serpapi.com/manage-api-key) 获取 Key<br>' +
         '免费额度250 次/月，可填入多个 Key 轮询使用，额度耗尽的 Key 会自动跳过'),
       alwaysAttach: Schema.boolean().default(false).description(
-        '总是附加\`Google Lens`\结果'),
+        '总是附加\`Google Lens\` 结果'),
       hl: Schema.union([
         Schema.const('zh-cn').description('简体中文'),
         Schema.const('zh-tw').description('繁体中文'),

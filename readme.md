@@ -134,6 +134,8 @@ sauce b [图片]  # b 是 soutubot 的别名
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `alwaysAttach` | `boolean` | `false` | 总是附加 Ascii2D 结果。 |
+| `retries` | `number` | `2` | 失败重试次数。站点偶发 Cloudflare 挑战或响应缓慢，会自动重新导航重试。 |
+| `resolveTimeout` | `number` | `60` | 结果等待时间 (秒)，用于容忍 Cloudflare 挑战；与「全局网络请求超时」取较大值生效。 |
 
 #### Google Lens
 
