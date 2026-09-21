@@ -4,25 +4,50 @@ import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, Yandex as YandexConfig, SearchEngineName } from '../config'
 import { errorMessage, errorName } from '../utils'
 import type { PuppeteerManager } from '../puppeteer'
-import type { Page } from 'puppeteer-core'
+import type { ElementHandle, Page } from 'puppeteer-core'
 
 // Yandex 图片搜索器：使用 Puppeteer 上传图片并解析搜索结果
+//
+// Yandex 图片页是 SPA：DOM 里的上传按钮会先于事件绑定出现，
+// 水合完成前点击不会有任何反应。旧实现只等固定 5 秒就判定面板未打开，
+// 网络稍慢（JS 包未加载完）就必然失败，因此这里补上了：
+//   · 等待上传组件水合 + 网络静默
+//   · 打开上传面板的重试
+//   · 直接向隐藏 file input 注入文件（不走原生文件选择器）
+//   · 失败原因诊断与自动重试
 const logger = new Logger('sauce-aggregator')
+
+/** 重试之间的等待 */
+const RETRY_DELAY = 2000
+/** 上传组件水合完成的等待上限 */
+const UPLOADER_READY_TIMEOUT = 15000
+/** 打开上传面板的等待上限与尝试次数 */
+const PANEL_OPEN_TIMEOUT = 5000
+const PANEL_OPEN_ATTEMPTS = 3
+/** 提交图片后等待跳转结果页的上限 */
+const SUBMIT_TIMEOUT = 45000
+/** 网络静默的等待上限（第三方请求可能长时间不结束） */
+const NETWORK_IDLE_TIMEOUT = 8000
+/** 结果等待时间下限（秒），与全局请求超时取较大值 */
+const RESULT_TIMEOUT_FLOOR = 45
+/** 隐藏固定悬浮、可能拦截点击的推广浮层 */
+const OVERLAY_STYLE = '.DistributionPopup,.CbirIntent{display:none!important}'
 
 export class Yandex extends Searcher<YandexConfig.Config> {
     public readonly name: SearchEngineName = 'yandex'
     private puppeteer: PuppeteerManager
 
     private static readonly SELECTORS = {
-        COOKIE_POPUPS: [
-            { selector: '#gdpr-popup-v3-button-all', name: 'GDPR v3' },
-            { selector: 'button[data-testid="button-allow-all"]', name: 'Yandex cookies' },
-        ],
-        UPLOAD_BUTTON_NEW: '.Image-Uploader, button.Button2_view_action',
-        UPLOAD_BUTTON_OLD: '.HeaderDesktopActions-CbirButton',
-        OLD_UI_POPUP: '.CbirPanel-Popup',
-        OLD_UI_FILE_BTN: '.CbirPanel-FileControlsButton',
-        RESULTS_CONTAINER: '.CbirSites-Item, .CbirSimilar-Thumb',
+        // 上传组件已由 JS 接管的标记
+        UPLOADER_READY: '.cbir-uploader_js_inited, .CbirCore-FileInput',
+        // 打开上传面板的入口（搜索框右侧的相机按钮）
+        PANEL_OPENER: '.HeaderDesktopActions-CbirButton, .Image-Uploader, button.Button2_view_action',
+        UPLOAD_PANEL: '.CbirPanel-Popup',
+        // 真正承载文件的原生输入框
+        FILE_INPUT: '.CbirCore-FileInput, input[type=file]',
+        // 结果区：站点结果、相似图片、以及站点明确给出「无结果」的模板
+        RESULTS_CONTAINER: '.CbirSites-Item, .CbirSimilarList-Thumb, .CbirLayoutTemplate_empty',
+        EMPTY_MARKER: '.CbirLayoutTemplate_empty',
         RESULT_ITEMS: '.CbirSites-Item, .CbirSimilar-Item',
         RESULT_THUMB: 'img',
         RESULT_TITLE: '.CbirSites-ItemTitle a, .CbirSimilar-Title',
@@ -42,138 +67,195 @@ export class Yandex extends Searcher<YandexConfig.Config> {
             return []
         }
 
-        const startTime = Date.now()
-        const tempFilePath = options.tempFilePath
-        const page = await this.puppeteer.getPage()
+        const retries = Math.max(0, this.subConfig.retries ?? 1)
+        let lastError: Error | null = null
+        let savedSnapshot = false
 
-        try {
-            // 设置请求头以提高页面加载稳定性
-            await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            const page = await this.puppeteer.getPage()
+            try {
+                const results = await this.runSearch(page, options)
+                if (attempt > 0) logger.info(`[yandex] 第 ${attempt + 1} 次尝试成功，返回 ${results.length} 条结果`)
+                return results
+            } catch (error) {
+                lastError = error as Error
+                const last = attempt === retries
+                const message = errorMessage(error)
 
-            const url = `https://${this.subConfig.domain}/images/`
-            if (this.mainConfig.debug.enabled) logger.info(`[yandex] 导航到: ${url}`)
-            await page.goto(url, { waitUntil: 'domcontentloaded' })
-
-            // 处理可能的 Cookie 弹窗
-            await this.handleCookiePopups(page)
-
-            // 上传图片（根据页面不同布局采用不同策略）
-            const uploaded = await this.tryUploadImage(page, tempFilePath)
-            if (!uploaded) throw new Error('未能在已知布局中成功上传图片')
-
-            if (this.mainConfig.debug.enabled) logger.info('[yandex] 文件已提交，等待结果页面加载')
-
-            await page.waitForSelector(Yandex.SELECTORS.RESULTS_CONTAINER, { timeout: this.mainConfig.requestTimeout * 1000 })
-            if (this.mainConfig.debug.enabled) logger.info('[yandex] 结果已加载，开始解析')
-
-            const results = await this._parseResults(page, options.maxResults)
-
-            if (this.mainConfig.debug.enabled) {
-                const duration = Date.now() - startTime
-                logger.info(`[yandex] 搜索完成 (${duration}ms)，结果数: ${results.length}`)
-            }
-
-            if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
-                logger.info(`[yandex] Parsed JSON Response: ${JSON.stringify(results, null, 2)}`)
-            }
-
-            return results
-
-        } catch (error) {
-            // 捕获并封装为用户友好的错误信息
-            const message = errorMessage(error)
-            logger.warn(`[yandex] 请求或解析出错: ${message}`)
-            if (this.mainConfig.debug.enabled) await this.puppeteer.saveErrorSnapshot(page, this.name)
-
-            let friendlyMessage = 'Yandex 搜索失败。'
-            if (errorName(error) === 'TimeoutError' || /timeout/i.test(message)) {
-                friendlyMessage += '页面加载超时，可能是网络或代理问题。'
-            } else {
-                friendlyMessage += `内部错误: ${message}`
-            }
-            throw new Error(friendlyMessage)
-        } finally {
-            if (page && !page.isClosed()) await page.close()
-        }
-    }
-
-    // 检测并点击常见的 Cookie 接受弹窗
-    private async handleCookiePopups(page: Page): Promise<void> {
-        const cookiePopups = Yandex.SELECTORS.COOKIE_POPUPS
-
-        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检查 ${cookiePopups.length} 种 Cookie 弹窗`)
-
-        // 使用较短的超时时间 (3s)，避免无弹窗时长时间等待
-        const popupTimeout = 3000
-
-        const detectionPromises = cookiePopups.map((popup) =>
-            (async () => {
-                try {
-                    await page.waitForSelector(popup.selector, { visible: true, timeout: popupTimeout })
-                    if (this.mainConfig.debug.enabled) logger.info(`[yandex] 检测到 '${popup.name}'，尝试点击接受`)
-                    await page.click(popup.selector)
-                    // 点击后等待消失，也使用较短超时
-                    await page.waitForSelector(popup.selector, { hidden: true, timeout: popupTimeout })
-                } catch (e) {
-                    // 未检测到此弹窗：忽略
+                // 失败时保存一次页面快照，便于定位是改版、风控还是网络问题
+                if (this.mainConfig.debug.enabled && !savedSnapshot) {
+                    savedSnapshot = true
+                    await this.puppeteer.saveErrorSnapshot(page, this.name).catch(() => { })
                 }
-            })()
-        )
 
-        await Promise.allSettled(detectionPromises)
-        if (this.mainConfig.debug.enabled) logger.info('[yandex] Cookie 弹窗处理完成')
+                logger.warn(`[yandex] 第 ${attempt + 1}/${retries + 1} 次尝试失败: ${message}`)
+
+                if (!last) await this.ctx.sleep(RETRY_DELAY)
+            } finally {
+                if (!page.isClosed()) await page.close().catch(() => { })
+            }
+        }
+
+        throw new Error(`Yandex 搜索失败。${this.describeFailure(lastError)}`)
     }
 
-    // 根据不同 UI 布局尝试上传图片
-    private async tryUploadImage(page: Page, filePath: string): Promise<boolean> {
-        const newUiButtonSelector = Yandex.SELECTORS.UPLOAD_BUTTON_NEW
-        const oldUiButtonSelector = Yandex.SELECTORS.UPLOAD_BUTTON_OLD
+    /** 单次完整流程：导航 → 打开面板 → 提交图片 → 等待并解析结果 */
+    private async runSearch(page: Page, options: SearchOptions): Promise<Searcher.Result[]> {
+        const startTime = Date.now()
 
-        // 给上传按钮检测更多时间 (10s 或配置值的一半)
-        const uploadTimeout = Math.max(10000, this.mainConfig.requestTimeout * 500)
+        // 站点响应慢时，导航本身也要给足时间
+        const navTimeout = Math.max(this.mainConfig.requestTimeout * 1000, 20000)
 
-        if (this.mainConfig.debug.enabled) logger.info('[yandex] 检测页面上传入口')
+        await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+
+        const url = `https://${this.subConfig.domain}/images/`
+        if (this.mainConfig.debug.enabled) logger.info(`[yandex] 导航到: ${url}`)
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navTimeout })
+
+        await this.preparePage(page)
+        await this.submitImage(page, options.tempFilePath!)
+
+        const empty = await this.waitForResults(page)
+
+        const results = empty ? [] : await this._parseResults(page, options.maxResults)
+
+        if (this.mainConfig.debug.enabled) {
+            const duration = Date.now() - startTime
+            logger.info(`[yandex] 搜索完成 (${duration}ms)，结果数: ${results.length}`)
+        }
+
+        if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
+            logger.info(`[yandex] Parsed JSON Response: ${JSON.stringify(results, null, 2)}`)
+        }
+
+        return results
+    }
+
+    /**
+     * 等待上传组件就绪，并隐藏会拦截点击的推广浮层。
+     * 页面刚 domcontentloaded 时按钮虽然已在 DOM 里，但事件尚未绑定，
+     * 此时点击是空点击——这是「面板打不开」的根因。
+     */
+    private async preparePage(page: Page): Promise<void> {
+        await page.waitForSelector(Yandex.SELECTORS.UPLOADER_READY, { timeout: UPLOADER_READY_TIMEOUT }).catch(() => {
+            if (this.mainConfig.debug.enabled) logger.warn('[yandex] 未检测到上传组件水合标记，仍继续尝试')
+        })
+
+        // 「将 Yandex 设为默认搜索」等浮层固定悬浮在页面上，可能挡住上传面板
+        await page.addStyleTag({ content: OVERLAY_STYLE }).catch(() => { })
+
+        // 尽量等事件绑定完成；部分第三方请求会长时间不结束，因此只等一个上限
+        await page.waitForNetworkIdle({ idleTime: 500, timeout: NETWORK_IDLE_TIMEOUT }).catch(() => { })
+    }
+
+    /** 打开上传面板并注入文件 */
+    private async submitImage(page: Page, filePath: string): Promise<void> {
+        await this.openUploadPanel(page)
+
+        const input = await page.waitForSelector(Yandex.SELECTORS.FILE_INPUT, { timeout: PANEL_OPEN_TIMEOUT })
+        if (!input) throw new Error('未找到文件上传入口')
+
+        // 直接向隐藏的 file input 注入文件，比走原生文件选择器更稳定
+        if (this.mainConfig.debug.enabled) logger.info('[yandex] 提交图片')
+        await (input as ElementHandle<HTMLInputElement>).uploadFile(filePath)
+
+        // 提交成功后站点会跳转到 /images/search?rpt=imageview&url=...
+        try {
+            await page.waitForFunction(() => /rpt=imageview/.test(location.href), { timeout: SUBMIT_TIMEOUT })
+        } catch {
+            throw new Error('提交后页面未跳转到结果页')
+        }
+
+        if (this.mainConfig.debug.enabled) logger.info('[yandex] 文件已提交，等待结果页面加载')
+    }
+
+    /** 点击相机按钮打开上传面板；水合未完成时点击无效，因此带重试 */
+    private async openUploadPanel(page: Page): Promise<void> {
+        let lastError: unknown = null
+
+        for (let attempt = 1; attempt <= PANEL_OPEN_ATTEMPTS; attempt++) {
+            try {
+                const opener = await page.waitForSelector(Yandex.SELECTORS.PANEL_OPENER, { visible: true, timeout: PANEL_OPEN_TIMEOUT })
+                if (!opener) throw new Error('未找到上传按钮')
+
+                await opener.click()
+                await page.waitForSelector(Yandex.SELECTORS.UPLOAD_PANEL, { visible: true, timeout: PANEL_OPEN_TIMEOUT })
+
+                if (this.mainConfig.debug.enabled) logger.info(`[yandex] 上传面板已打开（第 ${attempt} 次尝试）`)
+                return
+            } catch (error) {
+                lastError = error
+                if (this.mainConfig.debug.enabled) {
+                    logger.warn(`[yandex] 第 ${attempt}/${PANEL_OPEN_ATTEMPTS} 次打开上传面板失败: ${errorMessage(error)}`)
+                }
+                if (attempt < PANEL_OPEN_ATTEMPTS) await this.ctx.sleep(RETRY_DELAY)
+            }
+        }
+
+        throw new Error(`未能打开上传面板（${errorMessage(lastError) || '未知原因'}）`)
+    }
+
+    /** 等待结果渲染；返回 true 表示站点明确给出了「无相似结果」 */
+    private async waitForResults(page: Page): Promise<boolean> {
+        const timeout = Math.max(this.mainConfig.requestTimeout, RESULT_TIMEOUT_FLOOR) * 1000
 
         try {
-            const raceResult = await Promise.race([
-                page.waitForSelector(newUiButtonSelector, { visible: true, timeout: uploadTimeout }).then(() => 'new'),
-                page.waitForSelector(oldUiButtonSelector, { visible: true, timeout: uploadTimeout }).then(() => 'old'),
-            ])
+            await page.waitForSelector(Yandex.SELECTORS.RESULTS_CONTAINER, { timeout })
+        } catch {
+            const diag = await this.diagnose(page)
+            throw new Error(`等待结果超时（${Math.round(timeout / 1000)} 秒）${diag}`)
+        }
 
-            if (raceResult === 'new') {
-                if (this.mainConfig.debug.enabled) logger.info('[yandex] 使用新版 UI 上传')
-                const [fileChooser] = await Promise.all([
-                    page.waitForFileChooser({ timeout: 10000 }),
-                    page.click(newUiButtonSelector),
-                ])
-                await fileChooser.accept([filePath])
-                if (this.mainConfig.debug.enabled) logger.info('[yandex] 新版上传成功')
-                return true
-            } else if (raceResult === 'old') {
-                if (this.mainConfig.debug.enabled) logger.info('[yandex] 使用旧版 UI 上传')
-                await page.click(oldUiButtonSelector)
-                await page.waitForSelector(Yandex.SELECTORS.OLD_UI_POPUP, { visible: true, timeout: 5000 })
-                const [fileChooser] = await Promise.all([
-                    page.waitForFileChooser({ timeout: 10000 }),
-                    page.click(Yandex.SELECTORS.OLD_UI_FILE_BTN),
-                ])
-                await fileChooser.accept([filePath])
-                if (this.mainConfig.debug.enabled) logger.info('[yandex] 旧版上传成功')
-                return true
-            }
-        } catch (e) {
-            if (this.mainConfig.debug.enabled) logger.warn('[yandex] 上传流程失败: ' + (errorMessage(e) || e))
-            return false
+        const items = await page.$$(Yandex.SELECTORS.RESULT_ITEMS)
+        if (items.length > 0) return false
+
+        const empty = await page.$(Yandex.SELECTORS.EMPTY_MARKER)
+        if (empty) {
+            if (this.mainConfig.debug.enabled) logger.info('[yandex] 站点未返回相似结果')
+            return true
         }
 
         return false
     }
 
+    /** 失败时抓取页面关键信息，便于区分改版、风控与网络问题 */
+    private async diagnose(page: Page): Promise<string> {
+        try {
+            const info = await page.evaluate(() => ({
+                title: document.title,
+                path: location.pathname,
+                uploader: !!document.querySelector('.cbir-uploader'),
+                panel: !!document.querySelector('.CbirPanel-Popup'),
+                items: document.querySelectorAll('.CbirSites-Item').length,
+                text: (document.body?.innerText ?? '').replace(/\s+/g, ' ').slice(0, 120),
+            }))
+            return `（页面: ${info.path} / 标题: ${info.title || '无'} / 上传组件: ${info.uploader ? '有' : '无'} / 面板: ${info.panel ? '开' : '关'} / 结果块: ${info.items} / 文本: ${info.text || '空'}）`
+        } catch {
+            return ''
+        }
+    }
+
+    /** 把失败原因转成用户可读的提示 */
+    private describeFailure(error: Error | null): string {
+        const message = errorMessage(error)
+        if (/上传面板/.test(message)) {
+            return '未能打开 Yandex 的上传面板，页面可能未加载完整或被风控拦截，可稍后重试。'
+        }
+        if (/未跳转到结果页/.test(message)) {
+            return '图片提交后页面没有跳转，可能是网络中断或站点限流。'
+        }
+        if (errorName(error) === 'TimeoutError' || /超时|timeout/i.test(message)) {
+            return '页面加载超时，可能是网络、代理或目标网站响应缓慢。'
+        }
+        return `内部错误: ${message}`
+    }
+
     // 从结果页 DOM 中解析搜索结果
     private async _parseResults(page: Page, maxResults: number): Promise<Searcher.Result[]> {
         const resultsSelector = Yandex.SELECTORS.RESULT_ITEMS
-        await page.waitForSelector(resultsSelector, { timeout: 5000 })
 
+        // 结果区已在上一步确认渲染完成，这里不再单独等待，
+        // 否则只要某一类结果缺失就会被误判为超时
         return page.$$eval(
             resultsSelector,
             (items, max, selectors) => {

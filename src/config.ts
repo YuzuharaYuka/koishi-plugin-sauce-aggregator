@@ -143,7 +143,14 @@ export interface Config {
 export namespace SauceNAO { export interface Config { apiKeys: string[]; confidenceThreshold?: number; } }
 export namespace TraceMoe { export interface Config { sendVideoPreview: boolean; confidenceThreshold?: number; } }
 export namespace IQDB { export interface Config { confidenceThreshold?: number; } }
-export namespace Yandex { export interface Config { alwaysAttach: boolean; domain: 'ya.ru' | 'yandex.com'; } }
+export namespace Yandex {
+  export interface Config {
+    alwaysAttach: boolean
+    domain: 'ya.ru' | 'yandex.com'
+    /** 搜索失败（多为页面未加载完或站点抖动）时的自动重试次数 */
+    retries: number
+  }
+}
 export namespace YandeRe { export interface Config { postQuality: 'jpeg' | 'sample' | 'original'; maxRating: 's' | 'q' | 'e'; enableLinkParsing: boolean; } }
 export namespace Konachan { export interface Config { postQuality: 'jpeg' | 'sample' | 'original'; maxRating: 's' | 'q' | 'e'; enableLinkParsing: boolean; } }
 export namespace Gelbooru { export interface Config { keyPairs: { userId: string; apiKey: string }[]; postQuality: 'original' | 'sample' | 'preview'; maxRating: 'general' | 'sensitive' | 'questionable' | 'explicit'; enableLinkParsing: boolean; } }
@@ -316,14 +323,13 @@ export const Config: Schema<Config> = Schema.intersect([
         Schema.const('ya.ru').description('ya.ru (推荐)'),
         Schema.const('yandex.com').description('yandex.com (锁区)'),
       ]).default('ya.ru').description('选择用于搜索的\`Yandex\`域名'),
+      retries: Schema.number().min(0).max(3).default(1).description('**失败重试次数**'),
     }).description('Yandex 设置'),
     ascii2d: Schema.object({
         alwaysAttach: Schema.boolean().default(false).description('总是附加\`Ascii2D\` 结果'),
-        retries: Schema.number().min(0).max(3).default(2).description('**失败重试次数**<br>' +
-          'Ascii2D 偶发 Cloudflare 挑战或响应缓慢，失败时自动重新导航并重试'),
+        retries: Schema.number().min(0).max(3).default(1).description('**失败重试次数**'),
         resolveTimeout: Schema.number().min(10).max(180).default(60).description('**结果等待时间 (秒)**<br>' +
-          '提交图片后等待结果出现的额外时间，用于容忍 Cloudflare 挑战；' +
-          '与「全局网络请求超时」取较大值生效'),
+          '提交图片后等待结果出现的额外时间，与「全局网络请求超时」取较大值生效'),
     }).description('Ascii2D 设置'),
     googlelens: Schema.object({
       apiKeys: Schema.array(Schema.string().role('secret')).default([]).description(

@@ -128,6 +128,7 @@ sauce b [图片]  # b 是 soutubot 的别名
 | :--- | :--- | :--- | :--- |
 | `alwaysAttach` | `boolean` | `false` | 总是附加 Yandex 结果。 |
 | `domain` | `string` | `ya.ru` | 搜索域名: `ya.ru` (推荐) 或 `yandex.com` (可能锁区)。 |
+| `retries` | `number` | `1` | 失败重试次数，`0` 为不重试。 |
 
 #### Ascii2D
 
