@@ -253,13 +253,13 @@ export const Config: Schema<Config> = Schema.intersect([
           Schema.const('first').description('返回最先找到的结果'),
           Schema.const('all').description('返回所有高匹配度结果'),
       ]).default('first').description(
-          '并行模式下高匹配度结果的取法：`first` 最先找到的 / `all` 全部'
+          '并行模式下高匹配度结果的取法'
       )
     }),
     confidenceThreshold: Schema.number().default(85).min(0).max(100).description('全局高匹配度阈值（%），各引擎可单独覆盖'),
     maxResults: Schema.number().default(2).min(0).max(10).description('低匹配度结果最多显示几条，0 不显示'),
     promptTimeout: Schema.number().default(60).min(10).description('等待用户发图的时间（秒）'),
-    requestTimeout: Schema.number().default(30).min(5).description('网络请求超时（秒），图源图片会按体积放宽'),
+    requestTimeout: Schema.number().default(30).min(5).description('网络请求超时（秒）'),
     enhancerRetryCount: Schema.number().min(0).max(5).default(1).description('图源图片下载失败后的重试次数'),
     prependLinkParsingMiddleware: Schema.boolean().default(false).description('**优先解析图源链接**<br>' +
     '开启后本插件先于其他插件处理消息中的图源链接<br>' +
@@ -292,7 +292,7 @@ export const Config: Schema<Config> = Schema.intersect([
       confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值（%），0 表示使用全局值'),
     }).description('IQDB 设置'),
     soutubot: Schema.object({
-      confidenceThreshold: Schema.number().min(0).max(100).default(60).description('独立高匹配度阈值（%），0 表示使用全局值；站点相似度分数普遍偏低，建议 25 ~ 35'),
+      confidenceThreshold: Schema.number().min(0).max(100).default(60).description('独立高匹配度阈值（%），0 表示使用全局值'),
       maxHighConfidenceResults: Schema.number().min(1).max(10).default(3).description('高匹配度结果最多显示几条'),
       searchMode: Schema.union([
         Schema.const('normal').description('常规'),
@@ -313,7 +313,7 @@ export const Config: Schema<Config> = Schema.intersect([
     ascii2d: Schema.object({
         alwaysAttach: Schema.boolean().default(false).description('无论是否找到高匹配度结果都展示 `Ascii2D` 结果'),
         retries: Schema.number().min(0).max(3).default(1).description('失败重试次数'),
-        resolveTimeout: Schema.number().min(10).max(180).default(60).description('提交后等待结果的时间（秒），用于容忍 Cloudflare 挑战，与全局超时取较大值'),
+        resolveTimeout: Schema.number().min(10).max(180).default(60).description('提交后等待结果的时间（秒），与全局超时取较大值'),
     }).description('Ascii2D 设置'),
     googlelens: Schema.object({
       apiKeys: Schema.array(Schema.string().role('secret')).default([]).description(

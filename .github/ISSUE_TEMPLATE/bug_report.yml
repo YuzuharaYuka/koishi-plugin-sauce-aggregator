@@ -12,52 +12,77 @@ body:
       options:
         - label: 我已搜索现有的 Issue。
           required: true
-        - label: 我已尝试使用最新版本的插件。
+        - label: 我已使用最新版本的插件。
           required: true
-        - label: 我已确认这不是一个配置问题或上游服务问题。
+        - label: 我已确认这不是配置问题或上游服务问题（如站点风控、API 额度耗尽）。
           required: true
-  
+
+  - type: input
+    id: plugin_version
+    attributes:
+      label: 插件版本
+      description: 见 `package.json` 或插件市场页面。
+      placeholder: 1.8.6
+    validations:
+      required: true
+
   - type: dropdown
     id: koishi_version
     attributes:
       label: Koishi 版本
       options:
         - Koishi v4.x
-        - Koishi v3.x
-        - 其他 (请在下方补充)
+        - 其他（请在下方补充）
+    validations:
+      required: true
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js 版本
+      description: 可执行 `node -v` 查看。本插件依赖 `cheerio`，需要 Node 20.18.1 及以上。
+      placeholder: v22.11.0
     validations:
       required: true
 
   - type: dropdown
     id: platform
     attributes:
-      label: 发生问题的适配器/平台
+      label: 发生问题的适配器 / 平台
       options:
         - onebot
+        - qq
+        - satori
         - discord
         - telegram
-        - other
+        - kook
+        - 其他（请在下方补充）
     validations:
       required: true
-      
+
   - type: dropdown
     id: service_affected
     attributes:
-      label: 哪个聚合服务受影响？
-      description: (请选择导致问题的具体服务)
+      label: 受影响的功能
+      description: 请选择出问题的搜图引擎或图源，可多选。
       options:
-        - Saucenao
-        - Ascii2d
-        - Iqdb
+        - SauceNAO
+        - IQDB
         - Trace.moe
+        - 搜图bot酱 (SoutuBot)
+        - Ascii2D
         - Yandex
-        - Soutubot
+        - Google Lens
         - Yande.re
+        - Konachan
         - Gelbooru
         - Danbooru
         - Pixiv
-        - 全部/核心逻辑
-      multiple: true 
+        - 指令 / 交互逻辑
+        - 链接解析
+        - 配置页
+        - 全部 / 不确定
+      multiple: true
     validations:
       required: true
 
@@ -65,11 +90,11 @@ body:
     id: reproduce
     attributes:
       label: 复现步骤
-      description: 请详细描述如何复现这个问题 (包括您使用的命令和配置)。
+      description: 请描述如何复现，包括使用的指令与相关配置。涉及 API Key 时请先打码。
       placeholder: |
-        1. 在平台 X 上，配置服务 Y 的 API Key。
-        2. 发送命令 `sauce <图片>`。
-        3. 发生错误/结果不正确。
+        1. 在平台 X 上完成服务 Y 的配置。
+        2. 发送指令 `sauce <图片>`。
+        3. 得到错误提示 / 结果不正确。
       render: markdown
     validations:
       required: true
@@ -78,7 +103,7 @@ body:
     id: logs
     attributes:
       label: 实际错误或 Koishi 日志
-      description: 请粘贴相关的错误信息、 Koishi 控制台日志或者截图快照。
+      description: 请粘贴相关报错与 Koishi 控制台日志；开启 `debug.enabled` 后的日志更有帮助。
       render: markdown
     validations:
       required: false
