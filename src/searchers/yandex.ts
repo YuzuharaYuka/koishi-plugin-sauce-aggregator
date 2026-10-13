@@ -242,7 +242,7 @@ export class Yandex extends Searcher<YandexConfig.Config> {
             return '未能打开 Yandex 的上传面板，页面可能未加载完整或被风控拦截，可稍后重试。'
         }
         if (/未跳转到结果页/.test(message)) {
-            return '图片提交后页面没有跳转，可能是网络中断或站点限流。'
+            return '图片提交后页面没有跳转，可能是网络中断或站点限流，请稍后重试。'
         }
         if (errorName(error) === 'TimeoutError' || /超时|timeout/i.test(message)) {
             return '页面加载超时，可能是网络、代理或目标网站响应缓慢。'

@@ -121,7 +121,7 @@ export async function sendFigureMessage(session: any, figureMessage: h, errorMes
       await session.send(figureMessage)
     } catch (e) {
       logger.warn(`${errorMessage}:`, (e as any).message)
-      await session.send('结果发送失败，请检查适配器兼容性。')
+      await session.send('结果发送失败，可能是平台不支持合并转发。')
     }
   }
 }

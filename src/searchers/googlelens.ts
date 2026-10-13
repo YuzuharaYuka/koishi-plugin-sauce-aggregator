@@ -174,16 +174,16 @@ export class GoogleLens extends Searcher<GoogleLensConfig.Config> {
     /** 把 SerpApi 的错误转成用户可读的提示 */
     private formatRequestError(message: string): string {
         if (/api key/i.test(message)) {
-            return 'SerpApi API Key 无效，请在「Google Lens 设置」中检查'
+            return 'SerpApi API Key 无效，请在「Google Lens 设置」中检查。'
         }
         if (/exceeded|quota|run out|plan|subscription/i.test(message)) {
-            return 'SerpApi 额度已用尽，请更换 Key 或升级套餐'
+            return 'SerpApi 额度已用尽，请更换 Key 或升级套餐。'
         }
         if (/状态码 429/.test(message)) {
-            return '请求过于频繁，请稍后再试'
+            return '请求过于频繁，站点已触发限流，请稍后再试。'
         }
         if (/超时|timeout/i.test(message)) {
-            return '请求超时，请检查网络或代理设置'
+            return '请求超时，请检查网络或代理设置。'
         }
         return `接口错误: ${message}`
     }

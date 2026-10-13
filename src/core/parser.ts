@@ -113,7 +113,7 @@ export class LinkParser {
   ): Promise<boolean> {
     try {
       this.debugLogger.info(`[${service.name}] 检测到链接，开始自动解析: ${url}`)
-      await session.send('检测到图源链接，正在解析，请稍候...')
+      await session.send('检测到图源链接，正在解析……')
 
       // 创建虚拟结果对象用于增强
       const dummyResult: any = {
@@ -131,7 +131,7 @@ export class LinkParser {
       )
 
       if (!enhancedResult) {
-        await session.send('链接解析失败或未找到有效信息。')
+        await session.send('未解析出有效信息，请确认链接是否有效。')
         return false
       }
 

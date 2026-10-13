@@ -264,7 +264,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
             ? '当前用户 ID 仍被拒绝，请确认 ID 有效，或更换代理出口 IP。'
             : '请在「Danbooru 图源设置」中填写用户 ID，或配置凭据中的用户名。';
         logger.warn(`[danbooru] 被 Cloudflare 拦截 (403 挑战页)。${hint}`);
-        return '被 Cloudflare 拦截 (403)，需按 Danbooru 要求配置带 `user #<用户ID>` 的 User-Agent。';
+        return '被 Cloudflare 拦截 (403)，需按 Danbooru 要求配置带 `user #<用户 ID>` 的 User-Agent。';
     }
 
     if (status === 401 || status === 403) {
@@ -277,7 +277,7 @@ export class DanbooruEnhancer extends Enhancer<DanbooruConfig.Config> {
         return '请求过于频繁 (429)，请稍后再试。';
     }
     if (error?.name === 'TimeoutError' || /timeout/i.test(error?.message || '')) {
-        return `请求超时 (${this.mainConfig.requestTimeout}秒)。`;
+        return `请求超时 (${this.mainConfig.requestTimeout} 秒)。`;
     }
     return error?.message || `网络请求失败 (${error?.name || '未知错误'})。`;
   }

@@ -35,9 +35,9 @@ export const ENHANCER_LABELS = {
 
 // 交互提示消息
 export const PROMPT_MESSAGES = {
-  WAITING_IMAGE: (timeout: number) => `请发送图片…… (超时: ${timeout}秒)`,
+  WAITING_IMAGE: (timeout: number) => `请发送图片……（${timeout} 秒内有效）`,
   CANCELLED: '已取消。',
-  NO_IMAGE_FOUND: '未找到图片，已取消。',
+  NO_IMAGE_FOUND: '未收到图片，已取消。',
   TIMEOUT: '等待超时，已取消。',
 } as const
 
@@ -72,17 +72,17 @@ export const ENHANCEMENT_ID_EXTRACTORS = {
 
 // 搜索结果提示信息
 export const SEARCH_MESSAGES = {
-  SEARCHING: '正在搜索...',
-  SEARCH_COMPLETE: '搜索完成，找到高匹配度结果:',
-  NO_HIGH_CONFIDENCE: '未找到高匹配度结果，显示如下:',
-  LOW_CONFIDENCE_RESULTS: '低匹配度结果如下:',
-  ATTACH_RESULTS: '来自附加引擎的结果:',
-  NO_RESULTS: '未找到任何相关结果。',
-  IMAGE_PROCESS_FAILED: '图片处理失败，请检查链接或网络。',
+  SEARCHING: '正在搜索……',
+  SEARCH_COMPLETE: '找到高匹配度结果:',
+  NO_HIGH_CONFIDENCE: '未找到高匹配度结果，以下是相似度较低的结果:',
+  LOW_CONFIDENCE_RESULTS: '其余低匹配度结果:',
+  ATTACH_RESULTS: '来自补充引擎的结果:',
+  NO_RESULTS: '未找到相关结果。',
+  IMAGE_PROCESS_FAILED: '图片处理失败，请检查图片链接或网络连接。',
   FORWARD_FAILED: '合并转发结果失败',
-  FORWARD_ATTACH_FAILED: '发送附加结果失败',
+  FORWARD_ATTACH_FAILED: '发送补充结果失败',
   FORWARD_LOW_CONFIDENCE_FAILED: '合并转发低匹配度结果失败',
-  PARTIAL_FAILURE: '部分引擎搜索失败:',
+  PARTIAL_FAILURE: '以下引擎未找到结果:',
   PROBLEMS_ENCOUNTERED: '遇到的问题:',
 } as const
 

@@ -27,36 +27,41 @@ export const usage = `
 ###	指令用法
 #### sauce [引擎名] [图片]
 *	别名: \`搜图\`, \`soutu\`
-*	选项: \`--all\` / \`-a\` (返回全部引擎搜索结果)
-*	支持指令后跟图片/URL、回复图片、或发送指令后等待图片。
-	*	**默认搜索**: \`sauce [图片]\` 按配置的 **搜索模式(串行/并行)** 进行搜索。
-	*	**全量搜索**: \`sauce -a [图片]\` 强制搜索所有启用的引擎并返回全部结果。
-	*	**指定引擎搜索**: \`sauce <引擎名> [图片]\` 只使用指定引擎搜索。
+*	选项: \`--all\` / \`-a\` 搜索全部已启用引擎
+*	给图方式: 指令后跟图片或图片链接、回复带图的消息、先发指令再发图
+	*	**默认搜索**: \`sauce [图片]\` 按配置的串行 / 并行模式搜索
+	*	**全量搜索**: \`sauce -a [图片]\` 搜索全部已启用引擎并返回全部结果
+	*	**指定引擎**: \`sauce <引擎名> [图片]\` 只用一个引擎
 
 ---
 
-#### 可用引擎 (及其别名):
-*	**[saucenao](https://saucenao.com/) (s)** : 识别动漫、插画和漫画图片等。
-*	**[iqdb](https://www.iqdb.org/) (i)** : 从图源网站识别动漫、漫画、游戏图片和壁纸。
-*	**[tracemoe](https://trace.moe/) (t)** : 识别番剧截图，提供番剧信息、集数、时间轴与视频预览。
-*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，使用完整或局部图识别nh或eh本子，下载nh本子可使用[nhentai-downloader](/market?keyword=nhentai-downloader)插件。
-*	**[ascii2d](https://ascii2d.net/) (a)** : 二次元画像詳細検索，作为补充结果。
-*	**[yandex](https://ya.ru/) (y)** : 识别网络媒体或网站中存在的特征相似图片并返回来源，主要作为补充结果。
-*	**[googlelens](https://lens.google.com/) (g)** : 谷歌以图搜图，覆盖全网来源，主要作为补充结果，需配置 **[SerpApi](https://serpapi.com/)** Key。
+#### 搜图引擎 (及别名)
+*	**[saucenao](https://saucenao.com/) (s)** : 画师平台，查找同人图与插画，需 API Key
+*	**[iqdb](https://www.iqdb.org/) (i)** : Booru 类图站，查找壁纸与游戏大图
+*	**[tracemoe](https://trace.moe/) (t)** : 番剧截图，给出番剧信息、集数与时间轴
+*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，索引 E-Hentai / ExHentai / nHentai 等站点
+*	**[ascii2d](https://ascii2d.net/) (a)** : 识别推特同人图，作为补充结果
+*	**[yandex](https://ya.ru/) (y)** : 特征相似图与来源，作为补充结果
+*	**[googlelens](https://lens.google.com/) (g)** : 谷歌以图搜图，作为补充结果，需 SerpApi Key
 
-#### 可用图源
-*	**[yandere](https://yande.re/post)** : 动漫和游戏插画图站，高清壁纸和原画。
-*	**[konachan](https://konachan.com/post)** : 动漫壁纸站。
-*	**[gelbooru](https://gelbooru.com/index.php?page=post&s=list&tags=all)** : 综合性动漫图站，插画、漫画和同人作品。
-*	**[danbooru](https://danbooru.donmai.us/)** : 动漫艺术网站，标签详尽元数据丰富。
-*	**[pixiv](https://www.pixiv.net/)** : 艺术家原创插画、漫画分享社区。
+\`ascii2d\`、\`yandex\`、\`googlelens\` 不参与「找到高匹配度结果即停止」的判定，默认只在未找到高匹配度结果时补位，
+开启各自的「总是附加」后则每次展示；\`sauce -a\` 会执行全部已启用引擎，不受该开关影响。
+
+#### 图源 (命中后获取作品详情与原图)
+*	**[yandere](https://yande.re/post)** : 动漫游戏插画图站，高清壁纸与原画
+*	**[konachan](https://konachan.com/post)** : 动漫壁纸站
+*	**[gelbooru](https://gelbooru.com/index.php?page=post&s=list&tags=all)** : 综合图站，插画、漫画与同人作品
+*	**[danbooru](https://danbooru.donmai.us/)** : 动漫艺术图站，标签与元数据详尽
+*	**[pixiv](https://www.pixiv.net/)** : 画师原创插画与漫画社区
+
 ---
 
-###	注意：
-*	部分引擎可能需要配置代理才可用，**http** 相关报错请先检查代理网络设置。
-*	返回的搜索结果可能存在 **R18/NSFW** 内容，请设置分级筛选或在合理范围内使用。
-*	\`saucenao\` 、\`googlelens\`引擎，\`gelbooru\` 、\`danbooru\` 、\`pixiv\` 图源需要配置 API Key 或 Token 才可用。
-* \`yandex\` 、 \`ascii2d\`引擎需要启用浏览器服务，服务器性能有限可以考虑关闭。
+###	注意
+*	部分引擎需要代理才可用，报 **http** 相关错误时请检查网络与代理设置。
+*	搜索结果可能包含 **R18/NSFW** 内容，建议收紧各图源的评级上限。
+*	\`saucenao\`、\`googlelens\` 与 \`gelbooru\`、\`danbooru\`、\`pixiv\` 需要配置 API Key 或 Token。
+*	\`yandex\`、\`ascii2d\` 需要浏览器环境，服务器性能有限时可以关闭。
+*	需要 nh 漫画下载能力时可搭配 [nhentai-downloader](/market?keyword=nhentai-downloader)。
 `
 
 export function apply(ctx: Context, config: Config) {
@@ -92,10 +97,10 @@ export function apply(ctx: Context, config: Config) {
   // 注册主搜图指令
   ctx.command('sauce [...text:string]', '聚合搜图')
     .alias('soutu', '搜图')
-    .option('all', '-a  强制搜索所有已启用的引擎')
+    .option('all', '-a  搜索全部已启用的引擎')
     .usage([
-      '支持多种灵活的搜图方式：',
-      '– 指令后直接跟图片或图片URL',
+      '支持三种给图方式：',
+      '– 指令后直接跟图片或图片链接',
       '– 回复一条包含图片的消息',
       '– 单独发送指令，然后在规定时间内发送图片',
       '',
@@ -104,7 +109,7 @@ export function apply(ctx: Context, config: Config) {
       'saucenao(s), iqdb(i), tracemoe(t), soutubot(b), ascii2d(a), yandex(y), googlelens(g)',
     ].join('\n'))
     .example('sauce [图片]  (默认模式搜索)')
-    .example('sauce -a [图片]  (搜索所有可用引擎)')
+    .example('sauce -a [图片]  (搜索全部已启用引擎)')
     .example('sauce saucenao [图片]  (使用 SauceNAO 搜索)')
     .example('sauce a [图片]  (使用 ascii2d 搜索)')
     .action(async ({ session, options }, text) => {

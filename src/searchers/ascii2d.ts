@@ -209,7 +209,7 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
             return '被 Cloudflare 人机验证拦截，可尝试更换代理网络后重试。'
         }
         if (/无法下载该图片/.test(message)) {
-            return 'Ascii2D 无法下载该图片链接（站点返回下载失败）。图片链接可能已过期，或该图床不允许它抓取。'
+            return 'Ascii2D 无法下载该图片链接 (站点返回下载失败)。图片链接可能已过期，或该图床不允许它抓取。'
         }
         if (/访问受限/i.test(message)) {
             return '站点提示访问受限或结果过多，请稍后再试。'
