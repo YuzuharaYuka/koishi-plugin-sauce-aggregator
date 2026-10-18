@@ -1,6 +1,7 @@
 import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, SoutuBot as SoutuBotConfig, SearchEngineName, SOUTUBOT_SEARCH_MODE_FACTOR } from '../config'
 import { describeHttpError, fetchJsonWithProxy } from '../core/http'
+import { ensureImageWithin } from '../core/image'
 
 // SoutuBot（搜图bot酱）搜索器
 //
@@ -157,9 +158,24 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
         const useProxy = this.subConfig.useProxy !== false
         const proxyUrl = useProxy ? this.mainConfig.proxy : undefined
 
-        const fileName = this.normalizeFileName(options.fileName)
+        // 站点要求图片宽度不超过 2000 像素（高度同样受限）。
+        // 全局预处理默认已压到 2000，这里兜底处理用户调大上限的情况。
+        const prepared = await ensureImageWithin(options.imageBuffer, 2000, {
+            quality: this.mainConfig.image?.quality ?? 90,
+        })
+        const uploadBuffer = prepared.buffer
+        let uploadName = options.fileName
+        if (prepared.changed) {
+            uploadName = `${(options.fileName || 'image').replace(/\.[^./\\]+$/, '') || 'image'}.jpg`
+            if (debugEnabled) {
+                const info = prepared.info
+                logger.info(`[soutubot] 图片已缩放到 ${info?.width}x${info?.height} 以符合站点限制`)
+            }
+        }
+
+        const fileName = this.normalizeFileName(uploadName)
         const form = new FormData()
-        form.append('file', new Blob([new Uint8Array(options.imageBuffer)], { type: this.mimeTypeOf(fileName) }), fileName)
+        form.append('file', new Blob([new Uint8Array(uploadBuffer)], { type: this.mimeTypeOf(fileName) }), fileName)
         form.append('factor', String(this.resolveFactor()))
         // 固定使用 display 模式：展示所需字段（标题/作者/标签/链接）已全部包含，
         // 且站点在 full 模式下限制结果数量必须 <= 10，display 无此限制。
@@ -167,7 +183,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
         form.append('top_k', String(this.subConfig.topK ?? 25))
 
         if (debugEnabled) {
-            logger.info(`[soutubot] 发送请求到 ${endpoint}，图片大小: ${options.imageBuffer.length} 字节，代理: ${proxyUrl || '直连'}`)
+            logger.info(`[soutubot] 发送请求到 ${endpoint}，图片大小: ${uploadBuffer.length} 字节，代理: ${proxyUrl || '直连'}`)
         }
 
         let payload: SoutuBotResponse
@@ -258,7 +274,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
             return '请求过于频繁，站点已触发限流，请稍后再试。'
         }
         if (/422/.test(message) || /结果数量必须/.test(message)) {
-            return `请求参数被站点拒绝 (${message})，请检查「候选结果数量」。`
+            return `请求参数被站点拒绝 (${message})，请检查图片尺寸与「候选结果数量」。`
         }
         if (/40[13]|503/.test(message)) {
             return '站点拒绝了本次请求 (可能触发了风控)，请更换代理网络或稍后再试。'

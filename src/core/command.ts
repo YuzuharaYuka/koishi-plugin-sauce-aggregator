@@ -1,6 +1,7 @@
 import { Context, Logger, Session, h } from 'koishi'
 import { Config, Searcher, SearchEngineName, SearchOptions, CommandParseResult, ImageInput } from '../config'
-import { getImageUrlAndName, preprocessImage, detectImageType } from '../utils'
+import { getImageUrlAndName, detectImageType } from '../utils'
+import { prepareImage } from './image'
 import { ENGINE_ALIASES, PROMPT_MESSAGES, isAlwaysAttach } from '../constants'
 import { DebugLogger } from './logger'
 import { Buffer } from 'buffer'
@@ -96,23 +97,36 @@ export class CommandHandler {
     try {
       const rawImageArrayBuffer = await this.ctx.http.get(imgData.url, {
         responseType: 'arraybuffer',
+        timeout: this.config.requestTimeout * 1000,
       })
+      const rawBuffer = Buffer.isBuffer(rawImageArrayBuffer)
+        ? rawImageArrayBuffer
+        : Buffer.from(rawImageArrayBuffer)
 
       // 补全文件扩展名
       let fileName = imgData.name
       if (!/\.(jpe?g|png|gif|webp)$/i.test(fileName)) {
-        const imageType = detectImageType(Buffer.from(rawImageArrayBuffer))
+        const imageType = detectImageType(rawBuffer)
         if (imageType) {
           fileName = `${fileName}.${imageType}`
         }
       }
 
-      // 预处理图片
-      const processedImageBuffer = await preprocessImage(Buffer.from(rawImageArrayBuffer))
+      // 预处理图片：缩放到引擎可接受的尺寸与体积
+      const prepared = await prepareImage(rawBuffer, {
+        maxEdge: this.config.image?.maxEdge ?? 2000,
+        maxSizeMB: this.config.image?.maxSizeMB ?? 2,
+        quality: this.config.image?.quality ?? 90,
+      })
+      if (prepared.changed) {
+        // 重新编码为 JPEG 后，扩展名与 MIME 必须同步，否则部分站点会返回 415
+        fileName = `${fileName.replace(/\.[^./\\]+$/, '') || 'image'}.jpg`
+        this.debugLogger.info(`[command] 图片已预处理，上传文件名: ${fileName}`)
+      }
 
       return {
         imageUrl: imgData.url,
-        imageBuffer: processedImageBuffer,
+        imageBuffer: prepared.buffer,
         fileName,
         maxResults: this.config.maxResults === 0 ? 3 : this.config.maxResults,
       }

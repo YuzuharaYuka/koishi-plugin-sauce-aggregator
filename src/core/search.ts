@@ -8,6 +8,7 @@ import { Semaphore } from './semaphore'
 import { PuppeteerManager } from '../puppeteer'
 import { formatNetworkError } from '../utils'
 import { DebugLogger } from './logger'
+import { EngineBusyError } from './errors'
 
 const logger = new Logger('sauce-aggregator:handler')
 
@@ -15,6 +16,8 @@ interface SearchOutput {
   engine: SearchEngineName
   results: SearcherResult.Result[]
   error: string | null
+  /** 引擎主动跳过（如站点排队）时的安静提示，不进入错误汇总 */
+  notice?: string
 }
 
 export class SearchHandler {
@@ -97,10 +100,21 @@ export class SearchHandler {
       const results = await searcher.search(options)
       return { engine: searcher.name, results, error: null }
     } catch (error) {
+      // 站点繁忙/排队属于「主动跳过」，不按搜索失败处理
+      if (error instanceof EngineBusyError) {
+        this.debugLogger.info(`[${searcher.name}] ${error.message}`)
+        return { engine: searcher.name, results: [], error: null, notice: `${searcher.name} ${error.message}` }
+      }
       const errorMessage = `[${searcher.name}] 引擎搜索失败: ${formatNetworkError(error)}`
       logger.warn(errorMessage)
       return { engine: searcher.name, results: [], error: errorMessage }
     }
+  }
+
+  /** 收集引擎主动跳过的提示（去重后保持顺序） */
+  private collectNotices(outputs: SearchOutput[]): string[] {
+    const notices = outputs.map((o) => o.notice).filter((n): n is string => !!n)
+    return [...new Set(notices)]
   }
 
   private async handleAttachEngines(attachOutputs: SearchOutput[], botUser: Universal.User, session: Session): Promise<void> {
@@ -163,6 +177,7 @@ export class SearchHandler {
   ): Promise<void> {
     const allSearchers = [...mainSearchers, ...attachSearchers]
     const allOutputs = await this.executeSearch(allSearchers, options)
+    const notices = this.collectNotices(allOutputs)
     allOutputs.forEach((o) => {
       if (o.error) collectedErrors.push(o.error)
     })
@@ -271,6 +286,9 @@ export class SearchHandler {
       if (collectedErrors.length > 0) {
         finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
       }
+      if (notices.length > 0) {
+        finalMessage += '\n\n' + notices.join('\n')
+      }
       await session.send(finalMessage)
       return
     }
@@ -289,6 +307,7 @@ export class SearchHandler {
     sortedEnhancers: Enhancer[]
   ): Promise<void> {
     const executedOutputs: SearchOutput[] = []
+    const notices: string[] = []
     let highConfidenceResults: SearcherResult.Result[] = []
     let highConfidenceSearcherName: SearchEngineName | null = null
     const executedEngineNames = new Set<SearchEngineName>()
@@ -296,6 +315,7 @@ export class SearchHandler {
     for (const searcher of searchers) {
       executedEngineNames.add(searcher.name)
       const output = await this.executeSearch([searcher], options)
+      notices.push(...this.collectNotices(output))
       if (output[0].error) collectedErrors.push(output[0].error)
       if (output[0].results.length > 0) executedOutputs.push(output[0])
 
@@ -348,6 +368,7 @@ export class SearchHandler {
         (s) => isAlwaysAttach(this.config, s.name) && !executedEngineNames.has(s.name)
       )
       const attachOutputs = await this.executeSearch(attachEngines, options)
+      notices.push(...this.collectNotices(attachOutputs))
       attachOutputs.forEach((o) => {
         if (o.error) collectedErrors.push(o.error)
       })
@@ -359,6 +380,7 @@ export class SearchHandler {
     const remainingSearchers = this.allEnabledSearchers.filter((s) => !executedEngineNames.has(s.name))
     if (remainingSearchers.length > 0) {
       const unexecutedOutputs = await this.executeSearch(remainingSearchers, options)
+      notices.push(...this.collectNotices(unexecutedOutputs))
       unexecutedOutputs.forEach((output) => {
         if (output.error) collectedErrors.push(output.error)
         if (output.results.length > 0) executedOutputs.push(output)
@@ -368,6 +390,7 @@ export class SearchHandler {
     if (executedOutputs.every((o) => o.results.length === 0)) {
       let finalMessage = SEARCH_MESSAGES.NO_RESULTS
       if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
+      if (notices.length > 0) finalMessage += '\n\n' + notices.join('\n')
       await session.send(finalMessage)
       return
     }
@@ -407,6 +430,7 @@ export class SearchHandler {
 
     let highConfidenceSent = false
     const lowConfidenceOutputs: SearchOutput[] = []
+    const notices: string[] = []
     const processedEnhancements = new Set<string>()
     const successfulEnhancers = new Set<string>()
     const completedMainEngines = new Set<SearchEngineName>()
@@ -439,6 +463,15 @@ export class SearchHandler {
       if (signal.aborted) return
       if (output.error) {
         collectedErrors.push(output.error)
+        return
+      }
+
+      // 引擎主动跳过（如 IQDB 排队）：只记录安静提示
+      if (output.notice) {
+        notices.push(output.notice)
+        if (SEARCH_ENGINES.MAIN.includes(searcher.name as any)) {
+          completedMainEngines.add(searcher.name)
+        }
         return
       }
 
@@ -555,9 +588,13 @@ export class SearchHandler {
     if (!highConfidenceSent && (lowConfidenceOutputs.length === 0 || this.config.maxResults === 0)) {
       let finalMessage = SEARCH_MESSAGES.NO_RESULTS
       if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
+      const uniqueNotices = [...new Set(notices)]
+      if (uniqueNotices.length > 0) finalMessage += '\n\n' + uniqueNotices.join('\n')
       await session.send(finalMessage)
-    } else if (collectedErrors.length > 0) {
-      await session.send(SEARCH_MESSAGES.PARTIAL_FAILURE + '\n' + collectedErrors.join('\n'))
+    } else {
+      if (collectedErrors.length > 0) {
+        await session.send(SEARCH_MESSAGES.PARTIAL_FAILURE + '\n' + collectedErrors.join('\n'))
+      }
     }
   }
 }

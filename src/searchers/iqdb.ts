@@ -4,6 +4,7 @@ import { Context, Logger } from 'koishi'
 import { Config, Searcher, SearchOptions, IQDB as IQDBConfig, SearchEngineName } from '../config'
 import * as cheerio from 'cheerio'
 import { USER_AGENT } from '../utils'
+import { EngineBusyError } from '../core/errors'
 
 // IQDB 搜索器：提交图片并解析 HTML 结果（使用 cheerio）
 const logger = new Logger('sauce-aggregator')
@@ -41,13 +42,38 @@ function parseImageProperties(alt: string) {
 
 export class IQDB extends Searcher<IQDBConfig.Config> {
   public readonly name: SearchEngineName = 'iqdb'
+  /** 排队繁忙后的恢复时间戳（毫秒）；冷却期内直接跳过，避免每次搜索都白等超时 */
+  private busyUntil = 0
 
   constructor(ctx: Context, mainConfig: Config, subConfig: IQDBConfig.Config) {
     super(ctx, mainConfig, subConfig)
   }
 
+  private get timeoutMs(): number {
+    return Math.max(5, this.subConfig.timeoutSeconds ?? 20) * 1000
+  }
+
+  private get cooldownMs(): number {
+    return Math.max(0, this.subConfig.cooldownMinutes ?? 10) * 60_000
+  }
+
+  /** 标记站点繁忙并进入冷却，返回可直接抛出的 EngineBusyError */
+  private markBusy(reason: string): EngineBusyError {
+    if (this.cooldownMs > 0) this.busyUntil = Date.now() + this.cooldownMs
+    const minutes = Math.ceil(this.cooldownMs / 60_000)
+    const suffix = this.cooldownMs > 0 ? `，${minutes} 分钟内跳过` : ''
+    logger.info(`[iqdb] ${reason}${suffix}`)
+    return new EngineBusyError(`${reason}${suffix}`, this.busyUntil)
+  }
+
   // 主搜索方法：提交图片并返回解析结果
   async search(options: SearchOptions): Promise<Searcher.Result[]> {
+    const remaining = this.busyUntil - Date.now()
+    if (remaining > 0) {
+      const minutes = Math.ceil(remaining / 60_000)
+      throw new EngineBusyError(`排队繁忙，${minutes} 分钟内跳过`, this.busyUntil)
+    }
+
     const form = new FormData()
     // 优化：直接使用 options.imageBuffer，避免额外的 Buffer.from 拷贝
     form.append('file', new Blob([options.imageBuffer as any]), options.fileName)
@@ -62,8 +88,16 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
           'User-Agent': USER_AGENT,
           Referer: 'https://iqdb.org/',
         },
-        timeout: this.mainConfig.requestTimeout * 1000,
+        timeout: this.timeoutMs,
       })
+
+      // 排队 / 限流页面不会给出结果，提前识别并进入冷却
+      if (/You are searching too much/i.test(html)) {
+        throw this.markBusy('触发了站点的频率限制')
+      }
+      if (/heavy load|currently under load|placed in a? queue|too many requests|try again in a few/i.test(html)) {
+        throw this.markBusy('站点正在排队')
+      }
 
       // 解析 HTML 并提取结果
       const results = this._parseResults(html)
@@ -81,17 +115,22 @@ export class IQDB extends Searcher<IQDBConfig.Config> {
 
       // 常见错误提示判断
       if (html.includes('File is too large')) throw new Error('图片体积过大 (超过 8MB 限制)。')
-      if (html.includes('You are searching too much.')) throw new Error('搜索过于频繁，请稍后再试。')
       if (html.includes("Can't read query result")) throw new Error('服务器未能读取查询结果，可能是临时性问题，请稍后重试。')
 
       return results
 
     } catch (error) {
-      // 超时特殊提示
-      if ((error as any).code === 'ETIMEDOUT' || /timeout/i.test((error as Error).message)) {
-        throw new Error('请求超时。IQDB 服务器可能正处于高负载状态，请稍后重试。')
+      // 已经在上面标记过繁忙
+      if (error instanceof EngineBusyError) throw error
+
+      // 超时：IQDB 繁忙时会长时间排队，视为繁忙而不是失败
+      const name = (error as Error)?.name || ''
+      const message = (error as Error)?.message || ''
+      if ((error as any)?.code === 'ETIMEDOUT' || /timeout|aborted/i.test(message) || name === 'TimeoutError') {
+        throw this.markBusy(`等待结果超时（${Math.round(this.timeoutMs / 1000)} 秒）`)
       }
-      logger.warn(`[iqdb] 请求出错: ${(error as Error).message}`)
+
+      logger.warn(`[iqdb] 请求出错: ${message}`)
       if (this.mainConfig.debug.enabled && (error as any).response) {
         logger.debug(`[iqdb] 响应状态: ${(error as any).response.status}`)
         logger.debug(`[iqdb] 响应数据: ${JSON.stringify((error as any).response.data)}`)

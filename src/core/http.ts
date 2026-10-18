@@ -3,6 +3,7 @@
 // 因此这里基于 Node 原生 fetch 实现，并可按需挂载 undici 的 ProxyAgent。
 
 import { Readable } from 'stream'
+import { ProxyAgent } from 'undici'
 
 /** 仅取 fetch 的 dispatcher 字段，避免在类型层面硬依赖 undici */
 type FetchDispatcher = NonNullable<RequestInit extends { dispatcher?: infer D } ? D : never>
@@ -11,34 +12,6 @@ export type FetchInit = Omit<RequestInit, 'dispatcher'> & { dispatcher?: FetchDi
 /** 代理 dispatcher 缓存，key 为代理地址（含空字符串表示直连） */
 const agentCache = new Map<string, FetchDispatcher>()
 
-type ProxyAgentCtor = new (uri: string) => FetchDispatcher
-let proxyAgentCtor: ProxyAgentCtor | null | undefined
-
-/**
- * 动态解析 undici 的 ProxyAgent。
- * 优先使用插件自身的 undici 依赖，找不到时回退到 Node 内置的 undici。
- */
-async function loadProxyAgentCtor(): Promise<ProxyAgentCtor | null> {
-    if (proxyAgentCtor !== undefined) return proxyAgentCtor
-
-    const candidates = ['undici', 'node:undici', 'internal/deps/undici/undici']
-    for (const specifier of candidates) {
-        try {
-            const mod: any = await import(/* @vite-ignore */ specifier)
-            const candidate = mod?.ProxyAgent ?? mod?.default?.ProxyAgent
-            if (typeof candidate === 'function') {
-                proxyAgentCtor = candidate as ProxyAgentCtor
-                return proxyAgentCtor
-            }
-        } catch {
-            // 继续尝试下一个候选模块
-        }
-    }
-
-    proxyAgentCtor = null
-    return proxyAgentCtor
-}
-
 /** 取得（并缓存）指定代理地址对应的 dispatcher，失败时返回 null 表示直连 */
 export async function resolveProxyDispatcher(proxyUrl?: string): Promise<FetchDispatcher | null> {
     const key = (proxyUrl || '').trim()
@@ -46,11 +19,8 @@ export async function resolveProxyDispatcher(proxyUrl?: string): Promise<FetchDi
 
     if (agentCache.has(key)) return agentCache.get(key) ?? null
 
-    const ctor = await loadProxyAgentCtor()
-    if (!ctor) return null
-
     try {
-        const agent = new ctor(key)
+        const agent = new ProxyAgent(key) as unknown as FetchDispatcher
         agentCache.set(key, agent)
         return agent
     } catch {

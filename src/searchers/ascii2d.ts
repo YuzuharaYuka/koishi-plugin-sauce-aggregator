@@ -12,8 +12,8 @@ import { errorMessage, errorName } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 
-/** 结果出现前的轮询间隔 */
-const POLL_INTERVAL = 1500
+/** 结果出现前的轮询间隔（结果通常几秒内出现，轮询过慢会平白多等） */
+const POLL_INTERVAL = 500
 /** 重试之间的等待 */
 const RETRY_DELAY = 2000
 

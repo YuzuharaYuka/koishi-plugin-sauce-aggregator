@@ -95,6 +95,17 @@ export interface SearchConfig {
 }
 
 
+// 图片预处理配置
+export interface ImageConfig {
+  /** 上传前的最长边上限（像素），0 表示不缩放 */
+  maxEdge: number
+  /** 上传前的体积上限（MB），0 表示不压缩 */
+  maxSizeMB: number
+  /** 重新编码时的 JPEG 质量 */
+  quality: number
+}
+
+
 // 图源增强器抽象类
 export abstract class Enhancer<T = any> {
   abstract name: EnhancerName
@@ -124,6 +135,7 @@ export interface Config {
   prependLinkParsingMiddleware: boolean;
   enhancerRetryCount: number;
   search: SearchConfig
+  image: ImageConfig
   puppeteer: PuppeteerConfig
   debug: DebugConfig
   saucenao: SauceNAO.Config
@@ -142,7 +154,15 @@ export interface Config {
 
 export namespace SauceNAO { export interface Config { apiKeys: string[]; confidenceThreshold?: number; } }
 export namespace TraceMoe { export interface Config { sendVideoPreview: boolean; confidenceThreshold?: number; } }
-export namespace IQDB { export interface Config { confidenceThreshold?: number; } }
+export namespace IQDB {
+  export interface Config {
+    confidenceThreshold?: number
+    /** 排队繁忙/超时后的冷却分钟数，0 表示不冷却 */
+    cooldownMinutes?: number
+    /** 单次搜索的等待上限（秒） */
+    timeoutSeconds?: number
+  }
+}
 export namespace Yandex {
   export interface Config {
     alwaysAttach: boolean
@@ -266,6 +286,17 @@ export const Config: Schema<Config> = Schema.intersect([
     '可能使同类的链接解析插件不再生效'),
   }).description('搜索设置'),
 
+  // ==================== 图片处理 ====================
+  Schema.object({
+    image: Schema.object({
+      maxEdge: Schema.number().min(0).max(8000).default(2000).description('**最长边（像素）**<br>' +
+        '上传前把图片缩到不超过该值，0 不缩放<br>'),
+      maxSizeMB: Schema.number().min(0).max(20).default(2).description('**体积上限（MB）**<br>' +
+        '上传前把图片压到不超过该体积，0 不压缩'),
+      quality: Schema.number().min(50).max(100).default(90).description('重新编码时的 JPEG 质量'),
+    }),
+  }).description('图片处理'),
+
   // ==================== 网络与浏览器 ====================
   Schema.object({
     proxy: Schema.string().default('http://127.0.0.1:7890').description(
@@ -290,6 +321,10 @@ export const Config: Schema<Config> = Schema.intersect([
     }).description('Trace.moe 设置'),
     iqdb: Schema.object({
       confidenceThreshold: Schema.number().min(0).max(100).default(85).description('独立高匹配度阈值（%），0 表示使用全局值'),
+      timeoutSeconds: Schema.number().min(5).max(120).default(20).description('**等待上限（秒）**<br>' +
+        'IQDB 繁忙时会排队，超过该时间即视为繁忙并跳过本次搜索'),
+      cooldownMinutes: Schema.number().min(0).max(120).default(10).description('**繁忙冷却（分钟）**<br>' +
+        '排队超时后暂停使用 IQDB 的分钟数，`0` 表示不冷却'),
     }).description('IQDB 设置'),
     soutubot: Schema.object({
       confidenceThreshold: Schema.number().min(0).max(100).default(60).description('独立高匹配度阈值（%），0 表示使用全局值'),

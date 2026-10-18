@@ -1,7 +1,5 @@
 import { Buffer } from 'buffer';
 import { createRequire } from 'module';
-import { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, encodePNGToStream, make } from 'pureimage';
-import { Readable, PassThrough } from 'stream';
 import { Context, Logger, h } from 'koishi';
 
 const logger = new Logger('sauce-aggregator');
@@ -428,89 +426,7 @@ export function detectImageType(buffer: Buffer): 'jpeg' | 'png' | null {
   return null
 }
 
-// 预处理图片压缩
-export async function preprocessImage(buffer: Buffer, maxSizeInMB = 4): Promise<Buffer> {
-  if (!Buffer.isBuffer(buffer)) {
-    logger.error('[utils] 传入的不是有效的 Buffer 对象')
-    return buffer
-  }
-
-  const ONE_MB = 1024 * 1024
-  if (buffer.length <= maxSizeInMB * ONE_MB) return buffer
-
-  logger.info(
-    `[utils] 图片体积 (${(buffer.length / ONE_MB).toFixed(2)}MB) 超出 ${maxSizeInMB}MB，正在压缩...`
-  )
-
-  try {
-    const imageType = detectImageType(buffer)
-    if (!imageType) {
-      logger.warn('[utils] 不支持的图片格式，无法压缩，将使用原图。')
-      return buffer
-    }
-
-    const stream = Readable.from(buffer)
-    const image =
-      imageType === 'jpeg'
-        ? await decodeJPEGFromStream(stream)
-        : await decodePNGFromStream(stream)
-
-    if (image.width <= 0 || image.height <= 0) {
-      logger.warn('图片尺寸无效，无法处理')
-      return buffer
-    }
-
-    const MAX_DIMENSION = 2000
-    const ratio = Math.min(MAX_DIMENSION / image.width, MAX_DIMENSION / image.height, 1)
-    const newWidth = Math.round(image.width * ratio)
-    const newHeight = Math.round(image.height * ratio)
-
-    const newCanvas = make(newWidth, newHeight)
-    const canvasCtx = newCanvas.getContext('2d')
-    canvasCtx.drawImage(
-      image,
-      0,
-      0,
-      image.width,
-      image.height,
-      0,
-      0,
-      newWidth,
-      newHeight
-    )
-
-    const processPromise = new Promise<Buffer>((resolve, reject) => {
-      const chunks: Buffer[] = []
-      const passThrough = new PassThrough()
-
-      passThrough.on('data', (chunk: Buffer) => chunks.push(chunk))
-      passThrough.on('finish', () => {
-        resolve(Buffer.concat(chunks))
-      })
-      passThrough.on('error', reject)
-
-      const encodeStream =
-        imageType === 'jpeg'
-          ? encodeJPEGToStream(newCanvas, passThrough, 90)
-          : encodePNGToStream(newCanvas, passThrough)
-
-      Promise.resolve(encodeStream).catch(reject)
-    })
-
-    // 添加 15 秒超时保护
-    const timeoutPromise = new Promise<Buffer>((_, reject) =>
-      setTimeout(() => reject(new Error('图片压缩处理超时')), 15000)
-    )
-
-    const finalBuffer = await Promise.race([processPromise, timeoutPromise])
-
-    logger.info(`[utils] 图片压缩完成，新体积: ${(finalBuffer.length / ONE_MB).toFixed(2)}MB`)
-    return finalBuffer
-  } catch (error) {
-    logger.error('[utils] 图片压缩失败:', error)
-    return buffer
-  }
-}
+// 图片预处理见 core/image.ts（prepareImage / ensureImageWithin）
 
 // 查找消息元素中的图片
 function findImageInElements(elements: h[] | undefined): { imgElement: h | undefined; textContent: string } {

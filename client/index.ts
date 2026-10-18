@@ -36,6 +36,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: '基础设置', header: '基础设置' },
       { label: '搜索设置', header: '搜索设置' },
+      { label: '图片处理', header: '图片处理' },
       { label: '网络与浏览器', header: '网络与浏览器' },
     ],
   },

@@ -26,8 +26,8 @@ const PANEL_OPEN_TIMEOUT = 5000
 const PANEL_OPEN_ATTEMPTS = 3
 /** 提交图片后等待跳转结果页的上限 */
 const SUBMIT_TIMEOUT = 45000
-/** 网络静默的等待上限（第三方请求可能长时间不结束） */
-const NETWORK_IDLE_TIMEOUT = 8000
+/** 网络静默的等待上限（第三方请求可能长时间不结束；实测 8s 时几乎必然超时） */
+const NETWORK_IDLE_TIMEOUT = 1500
 /** 结果等待时间下限（秒），与全局请求超时取较大值 */
 const RESULT_TIMEOUT_FLOOR = 45
 /** 隐藏固定悬浮、可能拦截点击的推广浮层 */
@@ -144,8 +144,9 @@ export class Yandex extends Searcher<YandexConfig.Config> {
         // 「将 Yandex 设为默认搜索」等浮层固定悬浮在页面上，可能挡住上传面板
         await page.addStyleTag({ content: OVERLAY_STYLE }).catch(() => { })
 
-        // 尽量等事件绑定完成；部分第三方请求会长时间不结束，因此只等一个上限
-        await page.waitForNetworkIdle({ idleTime: 500, timeout: NETWORK_IDLE_TIMEOUT }).catch(() => { })
+        // 页面常驻第三方请求，实测 8s 的 networkidle 几乎必然等到超时；
+        // 水合标记已出现，这里只留一个短窗口，点击失败由 openUploadPanel 的重试兜底
+        await page.waitForNetworkIdle({ idleTime: 300, timeout: NETWORK_IDLE_TIMEOUT }).catch(() => { })
     }
 
     /** 打开上传面板并注入文件 */

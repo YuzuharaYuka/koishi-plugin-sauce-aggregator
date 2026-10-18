@@ -98,7 +98,15 @@ export class PuppeteerManager {
         const args = [
             '--no-sandbox',
             '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
             '--disable-infobars',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-background-networking',
+            '--disable-component-update',
+            '--disable-sync',
+            '--disable-extensions',
+            '--mute-audio',
             '--window-size=1920,1080',
             '--lang=en-US,en',
         ];

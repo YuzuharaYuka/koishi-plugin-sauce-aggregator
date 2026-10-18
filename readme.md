@@ -71,6 +71,11 @@ npm i koishi-plugin-sauce-aggregator
 | `maxResults` | `2` | 低匹配度结果最多显示几条，`0` 不显示 |
 | `promptTimeout` | `60` | 等待用户发图的时间（秒） |
 | `requestTimeout` | `30` | 网络请求超时（秒） |
+| `image.maxEdge` | `2000` | 上传前把图片最长边缩到该像素，`0` 不缩放；SoutuBot 要求不超过 2000 |
+| `image.maxSizeMB` | `2` | 上传前的体积上限（MB），`0` 不压缩 |
+| `image.quality` | `90` | 重新编码时的 JPEG 质量 |
+| `iqdb.timeoutSeconds` | `20` | 等待 IQDB 结果的秒数，超时视为排队繁忙并跳过 |
+| `iqdb.cooldownMinutes` | `10` | IQDB 排队超时后暂停使用的分钟数，`0` 不冷却 |
 | `proxy` | `http://127.0.0.1:7890` | 独立代理，只作用于 Danbooru 图源与 SoutuBot、Yandex、Ascii2D 引擎 |
 | `puppeteer.*` | 见配置页 | 浏览器服务方式、常驻、并发与超时 |
 | `debug.enabled` | `false` | 输出调试日志 |
@@ -79,6 +84,11 @@ npm i koishi-plugin-sauce-aggregator
 
 各图源的 `enableLinkParsing` 默认关闭，开启后会自动识别消息中该站点的链接并回复作品详情与原图。
 开启 `prependLinkParsingMiddleware` 可让本插件先于其他插件处理这些链接。
+
+### 图片处理
+
+上传前会把图片缩到最长边不超过 `image.maxEdge`（默认 2000）、体积不超过 `image.maxSizeMB`（默认 2MB）；
+已合规的图片不会重新编码。支持 JPEG / PNG / WebP，GIF / BMP 超出限制时会原样上传。
 
 ## License
 
