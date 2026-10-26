@@ -48,7 +48,7 @@ npm i koishi-plugin-sauce-aggregator
 | [Danbooru](https://danbooru.donmai.us/) | 动漫艺术图站，标签与元数据详尽 |
 | [Pixiv](https://www.pixiv.net/) | 画师原创插画与漫画社区 |
 
-命中以上站点的结果会继续获取作品详情、标签与原图。
+命中以上站点的结果会继续获取作品详情、标签与原图。访问受 App API 限制的 Pixiv 作品时，会自动回退到 Web API 补全公开信息。
 
 ## 依赖
 
@@ -67,18 +67,20 @@ npm i koishi-plugin-sauce-aggregator
 | `order` / `enhancerOrder` | 全部启用 | 引擎与图源的启用状态、调用顺序 |
 | `search.mode` | `sequential` | `sequential` 串行 / `parallel` 并行 |
 | `search.parallelHighConfidenceStrategy` | `first` | 并行模式下高匹配度结果的取法：`first` 最先 / `all` 全部 |
-| `confidenceThreshold` | `85` | 全局高匹配度阈值（%），各引擎可单独覆盖 |
-| `maxResults` | `2` | 低匹配度结果最多显示几条，`0` 不显示 |
-| `promptTimeout` | `60` | 等待用户发图的时间（秒） |
+| `*.confidenceThreshold` | 见配置页 | 各引擎独立的高匹配度阈值（%），仅 SauceNAO、Trace.moe、IQDB、搜图bot酱可调 |
+| `*.maxLowConfidenceResults` | 见配置页 | 各引擎低匹配度结果展示上限，`0` 不展示；Trace.moe 默认 `0` |
+| `promptTimeout` | `60` | 等待用户发图的时长（秒） |
 | `requestTimeout` | `30` | 网络请求超时（秒） |
-| `image.maxEdge` | `2000` | 上传前把图片最长边缩到该像素，`0` 不缩放；SoutuBot 要求不超过 2000 |
+| `image.maxEdge` | `2000` | 上传前把图片最长边缩到该像素，`0` 不缩放；搜图bot酱要求不超过 2000 |
 | `image.maxSizeMB` | `2` | 上传前的体积上限（MB），`0` 不压缩 |
-| `image.quality` | `90` | 重新编码时的 JPEG 质量 |
-| `iqdb.timeoutSeconds` | `20` | 等待 IQDB 结果的秒数，超时视为排队繁忙并跳过 |
+| `image.quality` | `90` | 重新编码为 JPEG 时的质量 |
+| `iqdb.timeoutSeconds` | `20` | 等待 IQDB 结果的秒数，超时则跳过 IQDB |
 | `iqdb.cooldownMinutes` | `10` | IQDB 排队超时后暂停使用的分钟数，`0` 不冷却 |
-| `proxy` | `http://127.0.0.1:7890` | 独立代理，只作用于 Danbooru 图源与 SoutuBot、Yandex、Ascii2D 引擎 |
+| `proxy` | `http://127.0.0.1:7890` | 独立代理，仅用于 Danbooru 图源与搜图bot酱、Yandex、Ascii2D 引擎 |
 | `puppeteer.*` | 见配置页 | 浏览器服务方式、常驻、并发与超时 |
 | `debug.enabled` | `false` | 输出调试日志 |
+
+旧版全局 `confidenceThreshold`、`maxResults` 已移除，升级后请在对应引擎的设置中调整。
 
 ### 链接解析
 

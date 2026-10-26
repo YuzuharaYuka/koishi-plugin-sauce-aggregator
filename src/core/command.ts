@@ -69,6 +69,10 @@ export class CommandHandler {
     await session.send(PROMPT_MESSAGES.WAITING_IMAGE(this.config.promptTimeout))
     try {
       const nextMessageContent = await session.prompt(this.config.promptTimeout * 1000)
+      if (nextMessageContent === undefined) {
+        await session.send(PROMPT_MESSAGES.TIMEOUT)
+        return null
+      }
       if (!nextMessageContent) {
         await session.send(PROMPT_MESSAGES.CANCELLED)
         return null
@@ -128,7 +132,7 @@ export class CommandHandler {
         imageUrl: imgData.url,
         imageBuffer: prepared.buffer,
         fileName,
-        maxResults: this.config.maxResults === 0 ? 3 : this.config.maxResults,
+        resultLimit: 10,
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error)

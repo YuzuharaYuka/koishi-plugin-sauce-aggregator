@@ -2,7 +2,7 @@
 
 import { Context, h, Logger, Session, Universal } from 'koishi'
 import { Config, Searcher, SearchEngineName, SearchOptions, Searcher as SearcherResult, Enhancer, EnhancedResult } from '../config'
-import { SEARCH_ENGINES, ENHANCER_PATTERNS, ENHANCEMENT_ID_EXTRACTORS, SPECIAL_ENGINES, SEARCH_FILTERS, SEARCH_MESSAGES, MESSAGE_TITLES, isAlwaysAttach } from '../constants'
+import { SEARCH_ENGINES, ENHANCER_PATTERNS, ENHANCEMENT_ID_EXTRACTORS, SPECIAL_ENGINES, SEARCH_FILTERS, SEARCH_MESSAGES, MESSAGE_TITLES, isAlwaysAttach, isAttachEngine } from '../constants'
 import * as MessageBuilder from './builder'
 import { Semaphore } from './semaphore'
 import { PuppeteerManager } from '../puppeteer'
@@ -35,6 +35,18 @@ export class SearchHandler {
     this.puppeteerSemaphore = new Semaphore(config.puppeteer.concurrency)
     this.enhancerUrlPatterns = ENHANCER_PATTERNS
     this.debugLogger = new DebugLogger('search-handler', config)
+  }
+
+  /** 各引擎独立的高匹配度阈值；未配置的引擎按 0 处理 */
+  private getConfidenceThreshold(engine: SearchEngineName): number {
+    const engineConfig = this.config[engine] as { confidenceThreshold?: number }
+    return Math.max(0, Math.min(100, engineConfig?.confidenceThreshold ?? 0))
+  }
+
+  /** 各引擎独立的低匹配度展示条数；0 表示不展示 */
+  private getLowConfidenceLimit(engine: SearchEngineName): number {
+    const engineConfig = this.config[engine] as { maxLowConfidenceResults?: number }
+    return Math.max(0, Math.min(10, engineConfig?.maxLowConfidenceResults ?? 0))
   }
 
   private getEnhancementId(enhancerName: string, textToSearch: string): string | null {
@@ -118,12 +130,17 @@ export class SearchHandler {
   }
 
   private async handleAttachEngines(attachOutputs: SearchOutput[], botUser: Universal.User, session: Session): Promise<void> {
-    const successfulAttachOutputs = attachOutputs.filter((o) => o.results.length > 0)
-    if (successfulAttachOutputs.length === 0) return
+    const displayableOutputs = attachOutputs
+      .map((output) => ({
+        engine: output.engine,
+        results: output.results.slice(0, this.getLowConfidenceLimit(output.engine)),
+      }))
+      .filter((output) => output.results.length > 0)
+    if (displayableOutputs.length === 0) return
 
     const figureMessage = h('figure')
-    const nodePromises = successfulAttachOutputs.flatMap((output) =>
-      output.results.slice(0, this.config.maxResults).map((result) =>
+    const nodePromises = displayableOutputs.flatMap((output) =>
+      output.results.map((result) =>
         MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
       )
     )
@@ -193,10 +210,17 @@ export class SearchHandler {
       }
 
       if (output.results.length === 0) continue
-      const engineConfig = this.config[output.engine] as { confidenceThreshold?: number }
-      const thresholdConfig = engineConfig?.confidenceThreshold ?? 0
-      const threshold = thresholdConfig > 0 ? thresholdConfig : this.config.confidenceThreshold
 
+      // 附加引擎的 similarity 固定为 0，不参与高匹配度判定，只按展示条数取低匹配度结果
+      if (isAttachEngine(output.engine)) {
+        const lowResults = output.results.slice(0, this.getLowConfidenceLimit(output.engine))
+        if (lowResults.length > 0) {
+          lowConfidenceGroups.push({ engine: output.engine, results: lowResults })
+        }
+        continue
+      }
+
+      const threshold = this.getConfidenceThreshold(output.engine)
       const high: SearcherResult.Result[] = []
       const low: SearcherResult.Result[] = []
       output.results.forEach((result) => {
@@ -207,7 +231,7 @@ export class SearchHandler {
       if (high.length > 0) {
         highConfidenceGroups.push({ engine: output.engine, results: high })
       } else if (low.length > 0) {
-        const lowResults = low.slice(0, this.config.maxResults)
+        const lowResults = low.slice(0, this.getLowConfidenceLimit(output.engine))
         if (lowResults.length > 0) {
           lowConfidenceGroups.push({ engine: output.engine, results: lowResults })
         }
@@ -255,6 +279,11 @@ export class SearchHandler {
       }
     }
 
+    if (notices.length > 0) {
+      await session.send(notices.join('\n'))
+      notices.length = 0
+    }
+
     if (lowConfidenceGroups.length > 0 && (!mainResultsFound || isSingleEngineSearch || isAllSearch)) {
       if (!mainResultsFound) {
         await session.send(SEARCH_MESSAGES.NO_HIGH_CONFIDENCE)
@@ -274,7 +303,10 @@ export class SearchHandler {
 
     await this.handleAttachEngines(finalAttachOutputs, botUser, session)
 
-    if (!mainResultsFound && (finalAttachOutputs.every((o) => o.results.length === 0) || this.config.maxResults === 0)) {
+    const hasDisplayableAttach = finalAttachOutputs.some(
+      (output) => output.results.length > 0 && this.getLowConfidenceLimit(output.engine) > 0
+    )
+    if (!mainResultsFound && lowConfidenceGroups.length === 0 && !hasDisplayableAttach) {
       let finalMessage: string
       if (isSingleEngineSearch) {
         const engineName = mainSearchers[0].name
@@ -319,10 +351,7 @@ export class SearchHandler {
       if (output[0].error) collectedErrors.push(output[0].error)
       if (output[0].results.length > 0) executedOutputs.push(output[0])
 
-      const engineConfig = this.config[searcher.name] as { confidenceThreshold?: number }
-      const thresholdConfig = engineConfig?.confidenceThreshold ?? 0
-      const threshold = thresholdConfig > 0 ? thresholdConfig : this.config.confidenceThreshold
-
+      const threshold = this.getConfidenceThreshold(searcher.name)
       const foundResults = output[0].results.filter((r) => r.similarity >= threshold)
       if (foundResults.length > 0) {
         highConfidenceResults = foundResults
@@ -387,7 +416,14 @@ export class SearchHandler {
       })
     }
 
-    if (executedOutputs.every((o) => o.results.length === 0)) {
+    const displayableLow = executedOutputs
+      .map((output) => ({
+        engine: output.engine,
+        results: output.results.slice(0, this.getLowConfidenceLimit(output.engine)),
+      }))
+      .filter((output) => output.results.length > 0)
+
+    if (displayableLow.length === 0) {
       let finalMessage = SEARCH_MESSAGES.NO_RESULTS
       if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
       if (notices.length > 0) finalMessage += '\n\n' + notices.join('\n')
@@ -397,8 +433,8 @@ export class SearchHandler {
 
     await session.send(SEARCH_MESSAGES.NO_HIGH_CONFIDENCE)
     const figureMessage = h('figure')
-    const nodePromises = executedOutputs.flatMap((output) =>
-      output.results.slice(0, this.config.maxResults).map((result) =>
+    const nodePromises = displayableLow.flatMap((output) =>
+      output.results.map((result) =>
         MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
       )
     )
@@ -479,10 +515,10 @@ export class SearchHandler {
         completedMainEngines.add(searcher.name)
       }
 
-      const engineConfig = this.config[searcher.name] as { confidenceThreshold?: number }
-      const thresholdConfig = engineConfig?.confidenceThreshold ?? 0
-      const threshold = thresholdConfig > 0 ? thresholdConfig : this.config.confidenceThreshold
-      const highConfidenceResults = output.results.filter((r) => r.similarity >= threshold)
+      const isMainEngine = SEARCH_ENGINES.MAIN.includes(searcher.name as any)
+      const highConfidenceResults = isMainEngine
+        ? output.results.filter((r) => r.similarity >= this.getConfidenceThreshold(searcher.name))
+        : []
 
       if (highConfidenceResults.length > 0) {
         if (isFastFirstMode) {
@@ -565,36 +601,43 @@ export class SearchHandler {
     if (tempFile) await tempFile.cleanup()
     if (signal.aborted && isFastFirstMode) return
 
-    if (!highConfidenceSent && lowConfidenceOutputs.length > 0) {
+    if (!highConfidenceSent) {
       const finalLowConfidence = lowConfidenceOutputs.filter((o) => {
         const wasAborted = results.find((r) => r.status === 'rejected' && r.reason?.name === 'AbortError')
         // 因提前中止而未跑完的附加引擎结果不展示
         return !(wasAborted && SEARCH_ENGINES.ATTACH.includes(o.engine as any))
       })
+      const displayableLow = finalLowConfidence
+        .map((output) => ({
+          engine: output.engine,
+          results: output.results.slice(0, this.getLowConfidenceLimit(output.engine)),
+        }))
+        .filter((output) => output.results.length > 0)
 
-      if (finalLowConfidence.length > 0 && this.config.maxResults > 0) {
-        await session.send(SEARCH_MESSAGES.NO_HIGH_CONFIDENCE)
-        const figureMessage = h('figure')
-        const nodePromises = finalLowConfidence.flatMap((output) =>
-          output.results.slice(0, this.config.maxResults).map((result) =>
-            MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
-          )
-        )
-        figureMessage.children.push(...(await Promise.all(nodePromises)))
-        await MessageBuilder.sendFigureMessage(session, figureMessage, SEARCH_MESSAGES.FORWARD_LOW_CONFIDENCE_FAILED)
+      if (displayableLow.length === 0) {
+        let finalMessage = SEARCH_MESSAGES.NO_RESULTS
+        if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
+        const uniqueNotices = [...new Set(notices)]
+        if (uniqueNotices.length > 0) finalMessage += '\n\n' + uniqueNotices.join('\n')
+        await session.send(finalMessage)
+        return
       }
+
+      await session.send(SEARCH_MESSAGES.NO_HIGH_CONFIDENCE)
+      const uniqueNotices = [...new Set(notices)]
+      if (uniqueNotices.length > 0) await session.send(uniqueNotices.join('\n'))
+      const figureMessage = h('figure')
+      const nodePromises = displayableLow.flatMap((output) =>
+        output.results.map((result) =>
+          MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
+        )
+      )
+      figureMessage.children.push(...(await Promise.all(nodePromises)))
+      await MessageBuilder.sendFigureMessage(session, figureMessage, SEARCH_MESSAGES.FORWARD_LOW_CONFIDENCE_FAILED)
     }
 
-    if (!highConfidenceSent && (lowConfidenceOutputs.length === 0 || this.config.maxResults === 0)) {
-      let finalMessage = SEARCH_MESSAGES.NO_RESULTS
-      if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
-      const uniqueNotices = [...new Set(notices)]
-      if (uniqueNotices.length > 0) finalMessage += '\n\n' + uniqueNotices.join('\n')
-      await session.send(finalMessage)
-    } else {
-      if (collectedErrors.length > 0) {
-        await session.send(SEARCH_MESSAGES.PARTIAL_FAILURE + '\n' + collectedErrors.join('\n'))
-      }
+    if (collectedErrors.length > 0) {
+      await session.send(SEARCH_MESSAGES.PARTIAL_FAILURE + '\n' + collectedErrors.join('\n'))
     }
   }
 }

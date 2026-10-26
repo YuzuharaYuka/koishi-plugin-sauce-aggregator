@@ -90,7 +90,7 @@ export class GoogleLens extends Searcher<GoogleLensConfig.Config> {
                     logger.info(`[googlelens] Parsed JSON Response: ${JSON.stringify(payload, null, 2)}`)
                 }
 
-                const results = this.formatResults(payload, options.maxResults)
+                const results = this.formatResults(payload)
 
                 if (debugEnabled) {
                     const total = payload?.visual_matches?.length ?? 0
@@ -192,11 +192,11 @@ export class GoogleLens extends Searcher<GoogleLensConfig.Config> {
      * 解析 visual_matches。
      * Google Lens 会返回同一站点的大量相似图，这里按域名去重，每个站点只保留最靠前的一条。
      */
-    private formatResults(payload: SerpApiResponse, maxResults: number): Searcher.Result[] {
+    private formatResults(payload: SerpApiResponse): Searcher.Result[] {
         const matches = payload?.visual_matches || []
         if (!Array.isArray(matches) || matches.length === 0) return []
 
-        const limit = Math.max(1, maxResults || this.subConfig.maxResults || 5)
+        const limit = Math.max(1, this.subConfig.maxResults || 5)
         const seenHosts = new Set<string>()
         const results: Searcher.Result[] = []
 

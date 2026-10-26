@@ -104,15 +104,93 @@ class PixivApiService {
     }
   }
 
-  // [FIX] 将普通方法改为箭头函数
-  public async getArtworkDetail(pid: string): Promise<PixivIllust | null> {
+  // App API 会对部分作品返回 visible:false 的占位对象（空标题、100x100、
+  // limit_unviewable_360.png）。这类作品在 Web 端可能仍然公开，改用 Web API 兜底。
+  private isUnavailable(illust: PixivIllust | null): boolean {
+    if (!illust?.title || !illust.user?.name) return true;
+
+    const urls = [
+      illust.meta_single_page?.original_image_url,
+      ...(illust.meta_pages ?? []).map(page => page.image_urls?.large),
+    ];
+    return urls.some(url => typeof url === 'string' && /limit_(?:unviewable|sanity_level)_360\.png/.test(url));
+  }
+
+  private async requestWeb<T>(url: string): Promise<T | null> {
     try {
-      const response = await this._request(`https://app-api.pixiv.net/v1/illust/detail`, { illust_id: pid, filter: 'for_ios' });
-      return response.illust;
+      return await this.ctx.http.get(url, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Referer': 'https://www.pixiv.net/',
+          'Accept': 'application/json',
+        },
+        timeout: this.mainConfig.requestTimeout * 1000,
+      });
     } catch (error: any) {
-      if (this.mainConfig.debug.enabled) logger.warn(`[pixiv] 获取插画详情失败 (PID: ${pid}):`, error.response?.data || error.message);
+      if (this.mainConfig.debug.enabled) logger.warn('[pixiv] Web API 请求失败:', error.response?.data || error.message);
       return null;
     }
+  }
+
+  private async getArtworkDetailFromWeb(pid: string): Promise<PixivIllust | null> {
+    const detail = await this.requestWeb<any>(`https://www.pixiv.net/ajax/illust/${pid}`);
+    const body = detail?.body;
+    if (!body?.title || !body?.userId) return null;
+
+    const pagesResponse = await this.requestWeb<any>(`https://www.pixiv.net/ajax/illust/${pid}/pages`);
+    const pageList: any[] = Array.isArray(pagesResponse?.body) ? pagesResponse.body : [];
+    const metaPages = pageList
+      .map(page => ({
+        image_urls: {
+          original: page.urls?.original ?? '',
+          large: page.urls?.regular ?? page.urls?.original ?? '',
+          medium: page.urls?.small ?? page.urls?.regular ?? page.urls?.original ?? '',
+        },
+      }))
+      .filter(page => page.image_urls.original || page.image_urls.large);
+
+    return {
+      id: Number(body.id ?? pid),
+      title: body.title,
+      user: {
+        id: Number(body.userId),
+        name: body.userName ?? '',
+        account: body.userAccount ?? '',
+      },
+      tags: (body.tags?.tags ?? []).map((tag: any) => ({
+        name: tag.tag,
+        translated_name: tag.translation?.en,
+      })),
+      create_date: body.createDate ?? '',
+      width: Number(body.width) || 0,
+      height: Number(body.height) || 0,
+      x_restrict: Number(body.xRestrict) || 0,
+      meta_single_page: { original_image_url: body.urls?.original ?? '' },
+      meta_pages: metaPages,
+      page_count: Number(body.pageCount) || metaPages.length || 1,
+    };
+  }
+
+  // [FIX] 将普通方法改为箭头函数
+  public async getArtworkDetail(pid: string): Promise<PixivIllust | null> {
+    let illust: PixivIllust | null = null;
+    try {
+      const response = await this._request(`https://app-api.pixiv.net/v1/illust/detail`, { illust_id: pid, filter: 'for_ios' });
+      illust = response.illust;
+    } catch (error: any) {
+      if (this.mainConfig.debug.enabled) logger.warn(`[pixiv] 获取插画详情失败 (PID: ${pid}):`, error.response?.data || error.message);
+    }
+
+    if (!this.isUnavailable(illust)) return illust;
+
+    if (this.mainConfig.debug.enabled) logger.info(`[pixiv] App API 返回不可见占位，尝试 Web API 兜底 (PID: ${pid})...`);
+    const webIllust = await this.getArtworkDetailFromWeb(pid);
+    if (webIllust) {
+      if (this.mainConfig.debug.enabled) logger.info(`[pixiv] Web API 兜底成功 (PID: ${pid})。`);
+      return webIllust;
+    }
+
+    return illust;
   }
 
   // [FIX] 将普通方法改为箭头函数
@@ -156,6 +234,11 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
         return null;
       }
 
+      if (!illust.title || !illust.user?.name) {
+        logger.warn(`[pixiv] 帖子 ${postId} 不可见或当前账号无权访问，跳过图源增强。`);
+        return null;
+      }
+
       if (this.mainConfig.debug.logApiResponses.includes(this.name)) {
         logger.info(`[pixiv] API 响应: ${JSON.stringify(illust, null, 2)}`);
       }
@@ -177,7 +260,15 @@ export class PixivEnhancer extends Enhancer<PixivConfig.Config> {
       let firstImageBuffer: Buffer | undefined;
       let firstImageType = 'image/jpeg';
       const additionalImages: h[] = [];
-      const botUser = await this.ctx.bots[0]?.getSelf();
+      let botUser: Awaited<ReturnType<Context['bots'][number]['getSelf']>> | undefined
+      for (const bot of this.ctx.bots) {
+        try {
+          botUser = await bot.getSelf()
+          break
+        } catch {
+          // 未连接的 Bot 获取自身信息会失败，继续尝试下一个
+        }
+      }
 
       const pages = illust.meta_pages?.length > 0
         ? illust.meta_pages

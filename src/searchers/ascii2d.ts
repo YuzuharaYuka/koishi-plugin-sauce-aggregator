@@ -124,7 +124,7 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
             logger.info(`[ascii2d] 搜索完成 (${Date.now() - startTime}ms)，解析到 ${results.length} 个结果`)
         }
 
-        return results.slice(0, options.maxResults)
+        return results.slice(0, options.resultLimit)
     }
 
     /** 结果等待时间：取「配置值」与「全局请求超时」中的较大者 */

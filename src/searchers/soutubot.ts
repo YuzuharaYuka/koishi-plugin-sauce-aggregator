@@ -221,7 +221,7 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
         }
 
         const rawResults = this.parseResults(payload)
-        const finalResults = this.formatResults(rawResults, options.maxResults)
+        const finalResults = this.formatResults(rawResults, options.resultLimit)
 
         if (debugEnabled) {
             logger.info(`[soutubot] 搜索完成 (${Date.now() - startTime}ms)，结果数: ${finalResults.length}`)
@@ -471,8 +471,8 @@ export class SoutuBot extends Searcher<SoutuBotConfig.Config> {
     }
 
     /** 将原始结果映射为 Searcher.Result */
-    private formatResults(rawResults: RawResult[], maxResults: number): Searcher.Result[] {
-        const limit = Math.max(maxResults || 0, this.subConfig.maxHighConfidenceResults || 1)
+    private formatResults(rawResults: RawResult[], resultLimit: number): Searcher.Result[] {
+        const limit = Math.max(resultLimit || 0, this.subConfig.maxHighConfidenceResults || 1)
 
         return rawResults.slice(0, limit).map((res) => {
             const details: string[] = []

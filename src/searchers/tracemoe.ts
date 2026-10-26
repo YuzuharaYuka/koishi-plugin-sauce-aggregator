@@ -51,7 +51,7 @@ export class TraceMoe extends Searcher<TraceMoeConfig.Config> {
         }
       }
 
-      return this._parseResults(uniqueResults.slice(0, options.maxResults))
+      return this._parseResults(uniqueResults.slice(0, options.resultLimit))
 
     } catch (error) {
       // 捕获并记录错误，尽量提供调试信息

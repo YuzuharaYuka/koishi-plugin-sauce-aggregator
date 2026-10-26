@@ -75,17 +75,12 @@ const ENHANCER_METADATA: Record<string, EnhancerMetadata> = {
 // 初始化 Puppeteer 管理器
 export function initializePuppeteerManager(ctx: Context, config: Config, debugLogger: DebugLogger): PuppeteerManager {
   if (config.puppeteer.provider === 'global') {
-    if (ctx.puppeteer) {
-      logger.info('[bootstrap] 正在使用全局 `puppeteer` 服务。')
-      return new PuppeteerManager(ctx, config, ctx.puppeteer as unknown as GlobalPuppeteer)
-    } else {
-      logger.warn('[bootstrap] 已配置使用全局 `puppeteer` 服务，但该服务未启用，将回退到内置 `puppeteer-extra`。')
-      return new PuppeteerManager(ctx, config)
-    }
-  } else {
-    logger.info('[bootstrap] 正在使用插件内置的 `puppeteer-extra` 服务。')
-    return new PuppeteerManager(ctx, config)
+    logger.info('[bootstrap] 正在使用全局 `puppeteer` 服务。')
+    // 全局服务可能晚于本插件加载，PuppeteerManager 会在实际取页面时再解析
+    return new PuppeteerManager(ctx, config, ctx.puppeteer as unknown as GlobalPuppeteer)
   }
+  logger.info('[bootstrap] 正在使用插件内置的 `puppeteer-extra` 服务。')
+  return new PuppeteerManager(ctx, config)
 }
 
 // 初始化所有搜图引擎

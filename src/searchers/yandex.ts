@@ -117,7 +117,7 @@ export class Yandex extends Searcher<YandexConfig.Config> {
 
         const empty = await this.waitForResults(page)
 
-        const results = empty ? [] : await this._parseResults(page, options.maxResults)
+        const results = empty ? [] : await this._parseResults(page, options.resultLimit)
 
         if (this.mainConfig.debug.enabled) {
             const duration = Date.now() - startTime
@@ -252,7 +252,7 @@ export class Yandex extends Searcher<YandexConfig.Config> {
     }
 
     // 从结果页 DOM 中解析搜索结果
-    private async _parseResults(page: Page, maxResults: number): Promise<Searcher.Result[]> {
+    private async _parseResults(page: Page, resultLimit: number): Promise<Searcher.Result[]> {
         const resultsSelector = Yandex.SELECTORS.RESULT_ITEMS
 
         // 结果区已在上一步确认渲染完成，这里不再单独等待，
@@ -293,7 +293,7 @@ export class Yandex extends Searcher<YandexConfig.Config> {
                 }
                 return parsedResults
             },
-            maxResults,
+            resultLimit,
             Yandex.SELECTORS // 传递选择器到浏览器上下文
         )
     }

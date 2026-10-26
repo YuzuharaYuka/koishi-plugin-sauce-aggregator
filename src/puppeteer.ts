@@ -35,15 +35,17 @@ export class PuppeteerManager {
     private readonly _provider: 'internal' | 'global';
     private readonly _globalPuppeteer: GlobalPuppeteer | undefined;
 
+    private get globalPuppeteer(): GlobalPuppeteer | undefined {
+        return this._globalPuppeteer ?? (this.ctx as Context & { puppeteer?: GlobalPuppeteer }).puppeteer
+    }
+
     constructor(ctx: Context, config: Config, globalPuppeteer?: GlobalPuppeteer) {
         this.ctx = ctx;
         this.config = config;
         this._provider = config.puppeteer.provider;
         this._globalPuppeteer = globalPuppeteer;
 
-        if (this._provider === 'global' && !this._globalPuppeteer) {
-            logger.warn('[puppeteer] PuppeteerManager in global mode but no global service provided.');
-        }
+        // 全局服务可能晚于本插件加载，getPage 时会再取一次
     }
 
     // 初始化常驻浏览器（如启用）
@@ -140,7 +142,8 @@ export class PuppeteerManager {
     // 确保浏览器实例可用
     private ensureBrowserIsReady(): Promise<Browser> {
         if (this._provider === 'global') {
-            if (this._globalPuppeteer?.browser) return Promise.resolve(this._globalPuppeteer.browser);
+            const globalPuppeteer = this.globalPuppeteer
+            if (globalPuppeteer?.browser) return Promise.resolve(globalPuppeteer.browser);
             return Promise.reject(new Error('全局 puppeteer 服务不可用。'));
         }
 
@@ -252,21 +255,22 @@ export class PuppeteerManager {
 
     // 获取全局浏览器 Page，断开时自动恢复
     private async getGlobalPageWithRetry(): Promise<Page> {
-        if (!this._globalPuppeteer) throw new Error('全局 puppeteer 服务不可用。');
+        const globalPuppeteer = this.globalPuppeteer
+        if (!globalPuppeteer) throw new Error('全局 puppeteer 服务不可用。');
         try {
-            if (this._globalPuppeteer.browser && !this._globalPuppeteer.browser.isConnected()) {
+            if (globalPuppeteer.browser && !globalPuppeteer.browser.isConnected()) {
                 throw new Error('Browser has been closed');
             }
-            return await this._globalPuppeteer.page();
+            return await globalPuppeteer.page();
         } catch (error: any) {
-            if (error.message.includes('连接已断开') || error.message.includes('Browser has been closed') || error.message.includes('Session closed') || !this._globalPuppeteer.browser?.isConnected()) {
+            if (error.message.includes('连接已断开') || error.message.includes('Browser has been closed') || error.message.includes('Session closed') || !globalPuppeteer.browser?.isConnected()) {
                 logger.warn('[puppeteer] 全局 Puppeteer 服务连接已断开，尝试自动恢复...');
                 try {
-                    if (this._globalPuppeteer.connect) {
-                        await this._globalPuppeteer.connect();
+                    if (globalPuppeteer.connect) {
+                        await globalPuppeteer.connect();
                         logger.info('[puppeteer] 全局 Puppeteer 服务已重新连接，将在2秒后重试获取页面...');
                         await this.ctx.sleep(2000);
-                        return await this._globalPuppeteer.page();
+                        return await globalPuppeteer.page();
                     } else {
                         throw new Error('Global puppeteer service does not support manual reconnection.');
                     }

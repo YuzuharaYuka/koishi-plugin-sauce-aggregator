@@ -7,7 +7,7 @@ const logger = new Logger('sauce-aggregator');
 // 图片源接口定义
 interface ImageSource {
   elements?: h[]
-  quote?: { elements?: h[] }
+  quote?: { elements?: h[]; content?: string }
 }
 
 export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
@@ -451,34 +451,36 @@ export function getImageUrlAndName(
 
   let url: string | undefined
   let imgElement: h | undefined
-  let textToParse = typeof text === 'string' ? text : ''
 
-  const { imgElement: element1, textContent: text1 } = findImageInElements(session.elements)
-  if (element1?.attrs?.src) {
-    url = String(element1.attrs.src)
-    imgElement = element1
-  } else if (text1) {
-    textToParse = text1
+  const current = findImageInElements(session.elements)
+  if (current.imgElement?.attrs?.src) {
+    url = String(current.imgElement.attrs.src)
+    imgElement = current.imgElement
   }
 
-  if (!url && session.quote && typeof session.quote === 'object') {
-    const { imgElement: element2, textContent: text2 } = findImageInElements(session.quote.elements)
-    if (element2?.attrs?.src) {
-      url = String(element2.attrs.src)
-      imgElement = element2
-    } else if (text2 && !textToParse) {
-      textToParse = text2
-    }
+  const quoted = session.quote && typeof session.quote === 'object'
+    ? findImageInElements(session.quote.elements)
+    : { imgElement: undefined, textContent: '' }
+  if (!url && quoted.imgElement?.attrs?.src) {
+    url = String(quoted.imgElement.attrs.src)
+    imgElement = quoted.imgElement
   }
 
-  if (!url && textToParse) {
-    try {
-      const potentialUrl = textToParse.trim().split(/\s+/)[0]
-      new URL(potentialUrl)
-      if (potentialUrl.startsWith('http')) {
-        url = potentialUrl
+  // 指令参数优先，其次引用消息，最后才是整条消息的文本；
+  // 直接取 URL，避免 "sauce <引擎> URL" 被指令前缀干扰。
+  if (!url) {
+    const candidates = [
+      typeof text === 'string' ? text : '',
+      quoted.textContent,
+      session.quote?.content || '',
+      current.textContent,
+    ]
+    for (const candidate of candidates) {
+      const match = candidate.match(/https?:\/\/[^\s<>"'，。；！？]+/)
+      if (match) {
+        url = match[0]
+        break
       }
-    } catch {
     }
   }
 

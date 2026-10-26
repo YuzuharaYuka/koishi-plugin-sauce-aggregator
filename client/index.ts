@@ -34,10 +34,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: '常规',
     items: [
-      { label: '基础设置', header: '基础设置' },
+      { label: '引擎与图源', header: '引擎与图源' },
       { label: '搜索设置', header: '搜索设置' },
+      { label: '网络设置', header: '网络设置' },
+      { label: '链接解析', header: '链接解析' },
       { label: '图片处理', header: '图片处理' },
-      { label: '网络与浏览器', header: '网络与浏览器' },
+      { label: '浏览器', header: '浏览器' },
     ],
   },
   {
@@ -46,7 +48,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: 'SauceNAO', header: 'SauceNAO 设置' },
       { label: 'Trace.moe', header: 'Trace.moe 设置' },
       { label: 'IQDB', header: 'IQDB 设置' },
-      { label: '搜图bot酱', header: '搜图bot酱 设置' },
+      { label: '搜图bot酱', header: '搜图bot酱设置' },
       { label: 'Yandex', header: 'Yandex 设置' },
       { label: 'Ascii2D', header: 'Ascii2D 设置' },
       { label: 'Google Lens', header: 'Google Lens 设置' },
