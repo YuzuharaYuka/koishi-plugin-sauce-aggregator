@@ -163,19 +163,17 @@ export function extractFigureText(figureMessage: h): string {
   return truncateText(collectText(figureMessage).trim())
 }
 
-// Session.send 会吞掉发送错误，且部分适配器成功发送合并转发时也不返回消息 ID；
-// 直接调用 bot.createMessage，既能拿到真实的发送异常，也能用返回的消息数量判断成功
+// Session.send 会吞掉发送错误；部分适配器成功发送合并转发时也可能返回空数组，
+// 因此不能把返回值当作失败依据。直接调用 bot.createMessage，只把抛出的异常视为失败。
 async function trySend(session: any, content: any): Promise<boolean> {
   try {
-    const messages = await session.bot.createMessage(
+    await session.bot.createMessage(
       session.channelId,
       content,
       session.event?.referrer,
       { session },
     )
-    if (messages.length > 0) return true
-    logger.warn('消息发送未返回结果，按发送失败处理。')
-    return false
+    return true
   } catch (e) {
     logger.warn('消息发送失败:', (e as any).message)
     return false
