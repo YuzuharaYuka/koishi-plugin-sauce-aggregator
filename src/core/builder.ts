@@ -163,15 +163,19 @@ export function extractFigureText(figureMessage: h): string {
   return truncateText(collectText(figureMessage).trim())
 }
 
-// Koishi 的 Session.send 会吞掉发送错误并返回空数组，因此需要同时检查返回值
+// Session.send 会吞掉发送错误，且部分适配器成功发送合并转发时也不返回消息 ID；
+// 直接调用 bot.createMessage，既能拿到真实的发送异常，也能用返回的消息数量判断成功
 async function trySend(session: any, content: any): Promise<boolean> {
   try {
-    const result = await session.send(content)
-    if (Array.isArray(result) && result.length === 0) {
-      logger.warn('消息发送未返回消息 ID，按发送失败处理。')
-      return false
-    }
-    return true
+    const messages = await session.bot.createMessage(
+      session.channelId,
+      content,
+      session.event?.referrer,
+      { session },
+    )
+    if (messages.length > 0) return true
+    logger.warn('消息发送未返回结果，按发送失败处理。')
+    return false
   } catch (e) {
     logger.warn('消息发送失败:', (e as any).message)
     return false
