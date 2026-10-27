@@ -49,6 +49,12 @@ export class SearchHandler {
     return Math.max(0, Math.min(10, engineConfig?.maxLowConfidenceResults ?? 0))
   }
 
+  /** 该引擎是否发送结果图片；关闭后不下载缩略图与视频预览 */
+  private shouldSendImages(engine: SearchEngineName): boolean {
+    const engineConfig = this.config[engine] as { sendImages?: boolean }
+    return engineConfig?.sendImages !== false
+  }
+
   private getEnhancementId(enhancerName: string, textToSearch: string): string | null {
     const regex = ENHANCEMENT_ID_EXTRACTORS[enhancerName as keyof typeof ENHANCEMENT_ID_EXTRACTORS]
     if (!regex) return null
@@ -85,6 +91,7 @@ export class SearchHandler {
       try {
         this.debugLogger.info(`[${enhancer.name}] 检测到匹配链接，开始增强...`)
         let enhancedData: EnhancedResult | null
+        // 图片模式只影响引擎自身结果；图源增强始终按配置获取图片
         const enhanceTask = () => enhancer.enhance(result)
 
         if (enhancer.needsPuppeteer) {
@@ -141,7 +148,7 @@ export class SearchHandler {
     const figureMessage = h('figure')
     const nodePromises = displayableOutputs.flatMap((output) =>
       output.results.map((result) =>
-        MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
+        MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser, this.shouldSendImages(output.engine))
       )
     )
     figureMessage.children.push(...(await Promise.all(nodePromises)))
@@ -273,7 +280,8 @@ export class SearchHandler {
             result,
             group.engine,
             botUser,
-            enhancedResult
+            enhancedResult,
+            this.shouldSendImages(group.engine)
           )
         }
       }
@@ -292,7 +300,7 @@ export class SearchHandler {
       }
       mainResultsFound = true
       const lowConfidencePromises = lowConfidenceGroups.flatMap((group) =>
-        group.results.map((result) => MessageBuilder.buildLowConfidenceNode(this.ctx, result, group.engine, botUser))
+        group.results.map((result) => MessageBuilder.buildLowConfidenceNode(this.ctx, result, group.engine, botUser, this.shouldSendImages(group.engine)))
       )
       figureMessage.children.push(...(await Promise.all(lowConfidencePromises)))
     }
@@ -388,7 +396,8 @@ export class SearchHandler {
           result,
           highConfidenceSearcherName!,
           botUser,
-          enhancedResult
+          enhancedResult,
+          this.shouldSendImages(highConfidenceSearcherName!)
         )
       }
       await MessageBuilder.sendFigureMessage(session, figureMessage, '发送高匹配度结果失败')
@@ -435,7 +444,7 @@ export class SearchHandler {
     const figureMessage = h('figure')
     const nodePromises = displayableLow.flatMap((output) =>
       output.results.map((result) =>
-        MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
+        MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser, this.shouldSendImages(output.engine))
       )
     )
     figureMessage.children.push(...(await Promise.all(nodePromises)))
@@ -541,7 +550,8 @@ export class SearchHandler {
             highConfidenceResults[0],
             output.engine,
             botUser,
-            enhancedResult
+            enhancedResult,
+            this.shouldSendImages(output.engine)
           )
           await MessageBuilder.sendFigureMessage(session, figureMessage, SEARCH_MESSAGES.FORWARD_FAILED)
         } else {
@@ -572,7 +582,8 @@ export class SearchHandler {
               result,
               output.engine,
               botUser,
-              enhancedResult
+              enhancedResult,
+              this.shouldSendImages(output.engine)
             )
           }
           await MessageBuilder.sendFigureMessage(session, figureMessage, SEARCH_MESSAGES.FORWARD_FAILED)
@@ -629,7 +640,7 @@ export class SearchHandler {
       const figureMessage = h('figure')
       const nodePromises = displayableLow.flatMap((output) =>
         output.results.map((result) =>
-          MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser)
+          MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser, this.shouldSendImages(output.engine))
         )
       )
       figureMessage.children.push(...(await Promise.all(nodePromises)))

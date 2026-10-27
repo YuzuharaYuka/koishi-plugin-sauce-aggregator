@@ -36,16 +36,16 @@ export const usage = `
 ---
 
 #### 搜图引擎 (及别名)
-*	**[saucenao](https://saucenao.com/) (s)** : 画师平台，查找同人图与插画，需 API Key
-*	**[iqdb](https://www.iqdb.org/) (i)** : Booru 类图站，查找壁纸与游戏大图
-*	**[tracemoe](https://trace.moe/) (t)** : 番剧截图，给出番剧信息、集数与时间轴
-*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，索引 E-Hentai / ExHentai / nHentai 等站点
+*	**[saucenao](https://saucenao.com/) (s)** : 同人图与插画检索，需 API Key
+*	**[iqdb](https://www.iqdb.org/) (i)** : Booru 类图站，检索壁纸与高清图
+*	**[tracemoe](https://trace.moe/) (t)** : 识别番剧截图，给出番剧、集数与时间轴
+*	**[soutubot](https://soutubot.moe/) (b)** : 搜图bot酱，索引 E-Hentai、ExHentai、nHentai 等站点
 *	**[ascii2d](https://ascii2d.net/) (a)** : 识别推特同人图，作为补充结果
 *	**[yandex](https://ya.ru/) (y)** : 特征相似图与来源，作为补充结果
 *	**[googlelens](https://lens.google.com/) (g)** : 谷歌以图搜图，作为补充结果，需 SerpApi Key
 
 \`ascii2d\`、\`yandex\`、\`googlelens\` 不参与「找到高匹配度结果即停止」的判定，默认只在未找到高匹配度结果时补位，
-开启各自的「总是附加」后则每次展示；\`sauce -a\` 会执行全部已启用引擎，不受该开关影响。
+开启各自的「总是附加」后则每次展示；\`sauce -a\` 会执行全部已启用引擎，不受该开关影响
 
 #### 图源 (命中后获取作品详情与原图)
 *	**[yandere](https://yande.re/post)** : 动漫游戏插画图站，高清壁纸与原画
@@ -57,11 +57,11 @@ export const usage = `
 ---
 
 ###	注意
-*	部分引擎需要代理才可用，报 **http** 相关错误时请检查网络与代理设置。
-*	搜索结果可能包含 **R18/NSFW** 内容，建议收紧各图源的评级上限。
-*	\`saucenao\`、\`googlelens\` 与 \`gelbooru\`、\`danbooru\`、\`pixiv\` 需要配置 API Key 或 Token。
-*	\`yandex\`、\`ascii2d\` 需要浏览器环境，服务器性能有限时可以关闭。
-*	需要 nh 漫画下载能力时可搭配 [nhentai-downloader](/market?keyword=nhentai-downloader)。
+*	部分引擎需要代理才可用，报 **http** 相关错误时请检查网络与代理设置
+*	搜索结果可能包含 **R18/NSFW** 内容，建议收紧各图源的评级上限
+*	\`saucenao\`、\`googlelens\` 与 \`gelbooru\`、\`danbooru\`、\`pixiv\` 需要配置 API Key 或 Token
+*	\`yandex\`、\`ascii2d\` 需要浏览器环境，服务器性能有限时可以关闭
+*	需要 nh、eh 漫画下载能力时可搭配 [nhentai-downloader](/market?keyword=nhentai-downloader)、[ehentai-downloader](/market?keyword=ehentai-downloader)
 `
 
 export function apply(ctx: Context, config: Config) {

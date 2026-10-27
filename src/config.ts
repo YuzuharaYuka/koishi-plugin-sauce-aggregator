@@ -151,8 +151,22 @@ export interface Config {
   pixiv: Pixiv.Config
 }
 
-export namespace SauceNAO { export interface Config { apiKeys: string[]; confidenceThreshold?: number; maxLowConfidenceResults?: number; } }
-export namespace TraceMoe { export interface Config { sendVideoPreview: boolean; confidenceThreshold?: number; maxLowConfidenceResults?: number; } }
+export namespace SauceNAO {
+  export interface Config {
+    apiKeys: string[]
+    confidenceThreshold?: number
+    maxLowConfidenceResults?: number
+    sendImages?: boolean
+  }
+}
+export namespace TraceMoe {
+  export interface Config {
+    sendVideoPreview: boolean
+    confidenceThreshold?: number
+    maxLowConfidenceResults?: number
+    sendImages?: boolean
+  }
+}
 export namespace IQDB {
   export interface Config {
     confidenceThreshold?: number
@@ -161,6 +175,7 @@ export namespace IQDB {
     cooldownMinutes?: number
     /** 单次搜索的等待上限（秒） */
     timeoutSeconds?: number
+    sendImages?: boolean
   }
 }
 export namespace Yandex {
@@ -170,6 +185,7 @@ export namespace Yandex {
     maxLowConfidenceResults?: number
     /** 搜索失败（多为页面未加载完或站点抖动）时的自动重试次数 */
     retries: number
+    sendImages?: boolean
   }
 }
 export namespace YandeRe { export interface Config { postQuality: 'jpeg' | 'sample' | 'original'; maxRating: 's' | 'q' | 'e'; enableLinkParsing: boolean; } }
@@ -184,6 +200,7 @@ export namespace Ascii2D {
     retries: number
     /** 提交后等待结果出现的额外秒数，用于容忍 Cloudflare 挑战 */
     resolveTimeout: number
+    sendImages?: boolean
   }
 }
 
@@ -198,6 +215,7 @@ export namespace GoogleLens {
     /** 向 SerpApi 请求的最大结果数 */
     maxResults: number
     maxLowConfidenceResults?: number
+    sendImages?: boolean
   }
 }
 export namespace SoutuBot {
@@ -209,9 +227,14 @@ export namespace SoutuBot {
     topK?: number
     useProxy?: boolean
     apiEndpoint?: string
+    sendImages?: boolean
   }
 }
 export namespace Pixiv { export interface Config { refreshToken: string; clientId: string; clientSecret: string; postQuality: 'original' | 'large' | 'medium'; allowR18: boolean; enableLinkParsing: boolean; maxImagesInPost: number; } }
+
+const sendImagesConfig = () => Schema.boolean().default(true).description(
+  '是否发送图片，图片发送失败时回退为纯文本'
+)
 
 const puppeteerConfig = Schema.object({
     provider: Schema.union([
@@ -326,10 +349,12 @@ export const Config: Schema<Config> = Schema.intersect([
         '可填多个，按顺序轮询'),
       confidenceThreshold: Schema.number().min(0).max(100).default(85).description('高匹配度阈值（%），`0` 不筛选'),
       maxLowConfidenceResults: Schema.number().min(0).max(10).default(2).description('低匹配度结果展示上限（条），`0` 不展示'),
+      sendImages: sendImagesConfig(),
     }).description('SauceNAO 设置'),
     tracemoe: Schema.object({
       confidenceThreshold: Schema.number().min(0).max(100).default(90).description('高匹配度阈值（%），`0` 不筛选'),
       maxLowConfidenceResults: Schema.number().min(0).max(10).default(0).description('低匹配度结果展示上限（条），`0` 不展示'),
+      sendImages: sendImagesConfig(),
       sendVideoPreview: Schema.boolean().default(true).description('高匹配度结果附带视频预览'),
     }).description('Trace.moe 设置'),
     iqdb: Schema.object({
@@ -339,6 +364,7 @@ export const Config: Schema<Config> = Schema.intersect([
         'IQDB 繁忙时会排队，超时则跳过 IQDB'),
       cooldownMinutes: Schema.number().min(0).max(120).default(10).description('**繁忙冷却（分钟）**<br>' +
         '排队超时后暂停使用 IQDB，`0` 不冷却'),
+      sendImages: sendImagesConfig(),
     }).description('IQDB 设置'),
     soutubot: Schema.object({
       searchMode: Schema.union([
@@ -350,6 +376,7 @@ export const Config: Schema<Config> = Schema.intersect([
       maxHighConfidenceResults: Schema.number().min(1).max(10).default(3).description('高匹配度结果展示上限（条）'),
       maxLowConfidenceResults: Schema.number().min(0).max(10).default(2).description('低匹配度结果展示上限（条），`0` 不展示'),
       apiEndpoint: Schema.string().default('https://soutubot.moe/api/search').description('接口地址，站点换域名时可覆盖'),
+      sendImages: sendImagesConfig(),
       useProxy: Schema.boolean().default(true).description('使用「网络设置」中的独立代理访问'),
     }).description('搜图bot酱设置'),
     yandex: Schema.object({
@@ -359,13 +386,15 @@ export const Config: Schema<Config> = Schema.intersect([
       ]).default('ya.ru').description('搜索域名，`ya.ru` 更稳定'),
       retries: Schema.number().min(0).max(3).default(1).description('搜索失败后的重试次数'),
       maxLowConfidenceResults: Schema.number().min(0).max(10).default(2).description('低匹配度结果展示上限（条），`0` 不展示'),
+      sendImages: sendImagesConfig(),
       alwaysAttach: Schema.boolean().default(false).description('即使找到高匹配度结果，也展示 `Yandex` 结果'),
     }).description('Yandex 设置'),
     ascii2d: Schema.object({
-        retries: Schema.number().min(0).max(3).default(1).description('搜索失败后的重试次数'),
-        resolveTimeout: Schema.number().min(10).max(180).default(60).description('提交后等待结果的时间（秒），与网络请求超时取较大值'),
-        maxLowConfidenceResults: Schema.number().min(0).max(10).default(2).description('低匹配度结果展示上限（条），`0` 不展示'),
-        alwaysAttach: Schema.boolean().default(false).description('即使找到高匹配度结果，也展示 `Ascii2D` 结果'),
+      retries: Schema.number().min(0).max(3).default(1).description('搜索失败后的重试次数'),
+      resolveTimeout: Schema.number().min(10).max(180).default(60).description('提交后等待结果的时间（秒），与网络请求超时取较大值'),
+      maxLowConfidenceResults: Schema.number().min(0).max(10).default(2).description('低匹配度结果展示上限（条），`0` 不展示'),
+      sendImages: sendImagesConfig(),
+      alwaysAttach: Schema.boolean().default(false).description('即使找到高匹配度结果，也展示 `Ascii2D` 结果'),
     }).description('Ascii2D 设置'),
     googlelens: Schema.object({
       apiKeys: Schema.array(Schema.string().role('secret')).default([]).description(
@@ -381,6 +410,7 @@ export const Config: Schema<Config> = Schema.intersect([
       maxResults: Schema.number().min(1).max(20).default(5).description(
         '请求的结果数；同一站点只保留最靠前一条'),
       maxLowConfidenceResults: Schema.number().min(0).max(10).default(2).description('低匹配度结果展示上限（条），`0` 不展示'),
+      sendImages: sendImagesConfig(),
       alwaysAttach: Schema.boolean().default(false).description(
         '即使找到高匹配度结果，也展示 `Google Lens` 结果'),
     }).description('Google Lens 设置'),
