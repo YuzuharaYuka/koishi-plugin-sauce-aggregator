@@ -225,9 +225,11 @@ export async function prepareImage(buffer: Buffer, limits: ImageLimits = {}): Pr
 
   const info = readImageInfo(buffer)
   const unchanged: PreparedImage = { buffer, changed: false, info }
+  // GIF 即使尺寸/体积都合规，也要取首帧转成静态图：多数引擎只处理静态图
+  const isGif = info?.format === 'gif'
 
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) return unchanged
-  if (!needsProcess(info, buffer.length, maxEdge, maxBytes)) return { buffer, changed: false, info }
+  if (!isGif && !needsProcess(info, buffer.length, maxEdge, maxBytes)) return { buffer, changed: false, info }
 
   // 纯 JS 解码的内存开销与像素数成正比，超大图直接放弃处理
   if (info && info.width * info.height > MAX_DECODE_PIXELS) {
@@ -235,8 +237,8 @@ export async function prepareImage(buffer: Buffer, limits: ImageLimits = {}): Pr
     return unchanged
   }
 
-  // 可解码的格式：JPEG / PNG 走 pureimage，WebP 走 WASM 解码器
-  if (info?.format !== 'jpeg' && info?.format !== 'png' && info?.format !== 'webp') {
+  // 可解码的格式：JPEG / PNG 走 pureimage，WebP 走 WASM 解码器，GIF 取首帧
+  if (info?.format !== 'jpeg' && info?.format !== 'png' && info?.format !== 'webp' && info?.format !== 'gif') {
     logger.warn(`${label}无法解码 ${info?.format ?? '该格式'}，将使用原图`)
     return unchanged
   }
@@ -251,7 +253,15 @@ export async function prepareImage(buffer: Buffer, limits: ImageLimits = {}): Pr
   try {
     const { decodeJPEGFromStream, decodePNGFromStream, encodeJPEGToStream, make } = await import('pureimage')
     let source: Bitmap
-    if (info.format === 'webp') {
+    if (info.format === 'gif') {
+      const omggif: any = await import('omggif')
+      const GifReader = omggif.GifReader ?? omggif.default?.GifReader
+      if (typeof GifReader !== 'function') throw new Error('omggif 未导出 GifReader')
+      const reader = new GifReader(buffer)
+      const pixels = new Uint8Array(reader.width * reader.height * 4)
+      reader.decodeAndBlitFrameRGBA(0, pixels)
+      source = { width: reader.width, height: reader.height, data: pixels }
+    } else if (info.format === 'webp') {
       const webp: any = await import('@cwasm/webp')
       const decode = webp.decode ?? webp.default?.decode
       if (typeof decode !== 'function') throw new Error('@cwasm/webp 未导出 decode')

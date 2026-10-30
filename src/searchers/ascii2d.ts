@@ -36,7 +36,7 @@ export class Ascii2D extends Searcher<Ascii2DConfig.Config> {
             return []
         }
 
-        const retries = Math.max(0, this.subConfig.retries ?? 2)
+        const retries = Math.max(0, this.subConfig.retries ?? 1)
         let lastError: Error | null = null
         let savedSnapshot = false
 

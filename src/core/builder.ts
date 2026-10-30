@@ -17,7 +17,8 @@ export async function createResultContent(
   ctx: Context,
   result: SearcherResult.Result,
   engineName?: SearchEngineName,
-  includeImages = true
+  includeImages = true,
+  timeoutMs = 30000
 ): Promise<h[]> {
   const authorLabel = engineName === 'tracemoe' ? ENHANCER_LABELS.tracemoe : ENHANCER_LABELS.default
 
@@ -40,7 +41,7 @@ export async function createResultContent(
   try {
     const imageBuffer = await downloadWithRetry(ctx, result.thumbnail, {
       retries: 1,
-      timeout: 10000,
+      timeout: timeoutMs,
     })
     const imageType = getImageTypeFromUrl(result.thumbnail)
     return [h.image(imageBuffer, imageType), textNode]
@@ -56,9 +57,10 @@ export async function buildLowConfidenceNode(
   result: SearcherResult.Result,
   engineName: SearchEngineName,
   botUser: Universal.User,
-  includeImages = true
+  includeImages = true,
+  timeoutMs = 30000
 ) {
-  const content = await createResultContent(ctx, result, engineName, includeImages)
+  const content = await createResultContent(ctx, result, engineName, includeImages, timeoutMs)
   return h(
     'message',
     {
@@ -86,14 +88,17 @@ export async function buildHighConfidenceMessage(
     )
   }
 
-  const formattedContent = await createResultContent(ctx, result, engineName, includeImages)
+  const formattedContent = await createResultContent(ctx, result, engineName, includeImages, config.requestTimeout * 1000)
   const detailsNode = h('message', { nickname: MESSAGE_TITLES.DETAILS, avatar: botUser.avatar }, formattedContent)
   figureMessage.children.push(detailsNode)
 
   if (includeImages && engineName === SPECIAL_ENGINES.TRACEMOE && config.tracemoe.sendVideoPreview && result.url) {
     try {
       if (config.debug.enabled) logger.info(`[builder] [${SPECIAL_ENGINES.TRACEMOE}] 正在为高置信度结果下载视频预览...`)
-      const videoPreview = await ctx.http.get(result.url, { responseType: 'arraybuffer' })
+      const videoPreview = await ctx.http.get(result.url, {
+        responseType: 'arraybuffer',
+        timeout: config.requestTimeout * 1000,
+      })
       figureMessage.children.push(
         h('message', { nickname: MESSAGE_TITLES.VIDEO_PREVIEW, avatar: botUser.avatar }, h.video(videoPreview, 'video/mp4'))
       )

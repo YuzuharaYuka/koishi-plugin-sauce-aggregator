@@ -8,13 +8,15 @@ import { Semaphore } from './semaphore'
 import { PuppeteerManager } from '../puppeteer'
 import { formatNetworkError } from '../utils'
 import { DebugLogger } from './logger'
-import { EngineBusyError } from './errors'
+import { EngineBusyError, EngineStatus, ENGINE_STATUS_LABELS, classifyEngineError } from './errors'
 
 const logger = new Logger('sauce-aggregator:handler')
 
 interface SearchOutput {
   engine: SearchEngineName
   results: SearcherResult.Result[]
+  /** ok / no_results 表示搜索正常完成；其余状态表示没有完成 */
+  status: EngineStatus
   error: string | null
   /** 引擎主动跳过（如站点排队）时的安静提示，不进入错误汇总 */
   notice?: string
@@ -117,16 +119,30 @@ export class SearchHandler {
   private async performSearch(searcher: Searcher, options: SearchOptions): Promise<SearchOutput> {
     try {
       const results = await searcher.search(options)
-      return { engine: searcher.name, results, error: null }
+      return {
+        engine: searcher.name,
+        results,
+        status: results.length > 0 ? 'ok' : 'no_results',
+        error: null,
+      }
     } catch (error) {
       // 站点繁忙/排队属于「主动跳过」，不按搜索失败处理
       if (error instanceof EngineBusyError) {
         this.debugLogger.info(`[${searcher.name}] ${error.message}`)
-        return { engine: searcher.name, results: [], error: null, notice: `${searcher.name} ${error.message}` }
+        return {
+          engine: searcher.name,
+          results: [],
+          status: 'busy',
+          error: null,
+          notice: `${searcher.name} ${error.message}`,
+        }
       }
-      const errorMessage = `[${searcher.name}] 引擎搜索失败: ${formatNetworkError(error)}`
+
+      const status = classifyEngineError(error)
+      const detail = formatNetworkError(error)
+      const errorMessage = `[${searcher.name}] ${ENGINE_STATUS_LABELS[status]}${detail ? `：${detail}` : ''}`
       logger.warn(errorMessage)
-      return { engine: searcher.name, results: [], error: errorMessage }
+      return { engine: searcher.name, results: [], status, error: errorMessage }
     }
   }
 
@@ -134,6 +150,14 @@ export class SearchHandler {
   private collectNotices(outputs: SearchOutput[]): string[] {
     const notices = outputs.map((o) => o.notice).filter((n): n is string => !!n)
     return [...new Set(notices)]
+  }
+
+  /** 有引擎未完成时，不再笼统地说「未找到相关结果」 */
+  private getNoResultsMessage(collectedErrors: string[], engine?: SearchEngineName): string {
+    const message = collectedErrors.length > 0
+      ? SEARCH_MESSAGES.NO_RESULTS_INCOMPLETE
+      : SEARCH_MESSAGES.NO_RESULTS
+    return engine ? `[${engine}] ${message}` : message
   }
 
   private async handleAttachEngines(attachOutputs: SearchOutput[], botUser: Universal.User, session: Session): Promise<void> {
@@ -148,7 +172,14 @@ export class SearchHandler {
     const figureMessage = h('figure')
     const nodePromises = displayableOutputs.flatMap((output) =>
       output.results.map((result) =>
-        MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser, this.shouldSendImages(output.engine))
+        MessageBuilder.buildLowConfidenceNode(
+          this.ctx,
+          result,
+          output.engine,
+          botUser,
+          this.shouldSendImages(output.engine),
+          this.config.requestTimeout * 1000
+        )
       )
     )
     figureMessage.children.push(...(await Promise.all(nodePromises)))
@@ -300,7 +331,14 @@ export class SearchHandler {
       }
       mainResultsFound = true
       const lowConfidencePromises = lowConfidenceGroups.flatMap((group) =>
-        group.results.map((result) => MessageBuilder.buildLowConfidenceNode(this.ctx, result, group.engine, botUser, this.shouldSendImages(group.engine)))
+        group.results.map((result) => MessageBuilder.buildLowConfidenceNode(
+          this.ctx,
+          result,
+          group.engine,
+          botUser,
+          this.shouldSendImages(group.engine),
+          this.config.requestTimeout * 1000
+        ))
       )
       figureMessage.children.push(...(await Promise.all(lowConfidencePromises)))
     }
@@ -315,13 +353,8 @@ export class SearchHandler {
       (output) => output.results.length > 0 && this.getLowConfidenceLimit(output.engine) > 0
     )
     if (!mainResultsFound && lowConfidenceGroups.length === 0 && !hasDisplayableAttach) {
-      let finalMessage: string
-      if (isSingleEngineSearch) {
-        const engineName = mainSearchers[0].name
-        finalMessage = `[${engineName}] ${SEARCH_MESSAGES.NO_RESULTS}`
-      } else {
-        finalMessage = SEARCH_MESSAGES.NO_RESULTS
-      }
+      const engineName = isSingleEngineSearch ? mainSearchers[0].name : undefined
+      let finalMessage = this.getNoResultsMessage(collectedErrors, engineName)
 
       if (collectedErrors.length > 0) {
         finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
@@ -433,7 +466,7 @@ export class SearchHandler {
       .filter((output) => output.results.length > 0)
 
     if (displayableLow.length === 0) {
-      let finalMessage = SEARCH_MESSAGES.NO_RESULTS
+      let finalMessage = this.getNoResultsMessage(collectedErrors)
       if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
       if (notices.length > 0) finalMessage += '\n\n' + notices.join('\n')
       await session.send(finalMessage)
@@ -444,7 +477,14 @@ export class SearchHandler {
     const figureMessage = h('figure')
     const nodePromises = displayableLow.flatMap((output) =>
       output.results.map((result) =>
-        MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser, this.shouldSendImages(output.engine))
+        MessageBuilder.buildLowConfidenceNode(
+          this.ctx,
+          result,
+          output.engine,
+          botUser,
+          this.shouldSendImages(output.engine),
+          this.config.requestTimeout * 1000
+        )
       )
     )
     figureMessage.children.push(...(await Promise.all(nodePromises)))
@@ -626,7 +666,7 @@ export class SearchHandler {
         .filter((output) => output.results.length > 0)
 
       if (displayableLow.length === 0) {
-        let finalMessage = SEARCH_MESSAGES.NO_RESULTS
+        let finalMessage = this.getNoResultsMessage(collectedErrors)
         if (collectedErrors.length > 0) finalMessage += '\n\n' + SEARCH_MESSAGES.PROBLEMS_ENCOUNTERED + '\n' + collectedErrors.join('\n')
         const uniqueNotices = [...new Set(notices)]
         if (uniqueNotices.length > 0) finalMessage += '\n\n' + uniqueNotices.join('\n')
@@ -640,7 +680,14 @@ export class SearchHandler {
       const figureMessage = h('figure')
       const nodePromises = displayableLow.flatMap((output) =>
         output.results.map((result) =>
-          MessageBuilder.buildLowConfidenceNode(this.ctx, result, output.engine, botUser, this.shouldSendImages(output.engine))
+          MessageBuilder.buildLowConfidenceNode(
+            this.ctx,
+            result,
+            output.engine,
+            botUser,
+            this.shouldSendImages(output.engine),
+            this.config.requestTimeout * 1000
+          )
         )
       )
       figureMessage.children.push(...(await Promise.all(nodePromises)))

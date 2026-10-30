@@ -1,6 +1,6 @@
 import { Context, Logger, h } from 'koishi'
 import { Config, Konachan as KonachanConfig, Enhancer, EnhancedResult, Searcher } from '../config'
-import { getImageTypeFromUrl } from '../utils'
+import { downloadWithRetry, getImageTypeFromUrl } from '../utils'
 
 const logger = new Logger('sauce-aggregator')
 // 匹配两种 URL 格式：
@@ -120,19 +120,18 @@ export class KonachanEnhancer extends Enhancer<KonachanConfig.Config> {
 
       if (this.mainConfig.debug.enabled) logger.info(`[konachan] 正在下载图源图片 (${this.subConfig.postQuality} 质量)... URL: ${downloadUrl}`)
 
-      // 使用 ctx.http 下载图片，添加 Referer 防盗链
-      const imageBuffer = await this.ctx.http.get(downloadUrl, {
-        responseType: 'arraybuffer',
+      // 使用统一下载器，保留 Referer 防盗链并遵循「图源下载重试次数」
+      const imageBuffer = await downloadWithRetry(this.ctx, downloadUrl, {
+        retries: this.mainConfig.enhancerRetryCount,
         timeout: this.mainConfig.requestTimeout * 1000,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Referer': `https://konachan.net/post/show/${postId}`,
-        }
-      }) as ArrayBuffer
+        },
+      })
 
       const imageType = getImageTypeFromUrl(downloadUrl)
 
-      return { details, imageBuffer: Buffer.from(imageBuffer), imageType }
+      return { details, imageBuffer, imageType }
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[konachan] 获取图源信息 (ID: ${postId}) 时发生错误: ${errorMessage}`)

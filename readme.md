@@ -60,7 +60,7 @@ npm i koishi-plugin-sauce-aggregator
 | `*.sendImages` | `true` | 是否发送图片；关闭后只发文字，图源图片不受影响 |
 | `image.maxEdge` | `2000` | 上传前最长边上限（像素），`0` 不缩放；搜图bot酱要求不超过 2000 |
 | `image.maxSizeMB` | `2` | 上传前体积上限（MB），`0` 不压缩 |
-| `proxy` | `http://127.0.0.1:7890` | 独立代理，仅用于 Danbooru 图源，以及搜图bot酱、Yandex、Ascii2D 引擎 |
+| `proxy` | 空 | 独立代理，仅用于 Danbooru 图源，以及搜图bot酱、Yandex、Ascii2D 引擎 |
 | `puppeteer.provider` | `internal` | `internal` 插件内置 / `global` 全局浏览器服务 |
 
 需要 API Key：SauceNAO、Google Lens
@@ -77,7 +77,7 @@ npm i koishi-plugin-sauce-aggregator
 ### 图片处理
 
 上传前将图片缩到最长边不超过 `image.maxEdge`、体积不超过 `image.maxSizeMB`；已合规图片不重新编码。
-支持 JPEG / PNG / WebP，GIF / BMP 超限时原样上传。
+支持 JPEG / PNG / WebP / GIF，GIF 取首帧后按上述规则处理；BMP 超限时原样上传。
 
 ## License
 

@@ -309,7 +309,7 @@ export const Config: Schema<Config> = Schema.intersect([
 
   // ==================== 网络设置 ====================
   Schema.object({
-    proxy: Schema.string().default('http://127.0.0.1:7890').description(
+    proxy: Schema.string().default('').description(
       '**独立代理**<br>' +
       '仅用于 Danbooru 图源与搜图bot酱、Yandex、Ascii2D 引擎<br>' +
       '留空则这些请求直连，其余跟随全局代理'

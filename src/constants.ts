@@ -78,11 +78,12 @@ export const SEARCH_MESSAGES = {
   LOW_CONFIDENCE_RESULTS: '其余低匹配度结果:',
   ATTACH_RESULTS: '来自补充引擎的结果:',
   NO_RESULTS: '未找到相关结果。',
+  NO_RESULTS_INCOMPLETE: '未获取到可用结果，部分引擎未完成。',
   IMAGE_PROCESS_FAILED: '图片处理失败，请检查图片链接或网络连接。',
   FORWARD_FAILED: '合并转发结果失败',
   FORWARD_ATTACH_FAILED: '发送补充结果失败',
   FORWARD_LOW_CONFIDENCE_FAILED: '合并转发低匹配度结果失败',
-  PARTIAL_FAILURE: '以下引擎未找到结果:',
+  PARTIAL_FAILURE: '部分引擎未完成:',
   PROBLEMS_ENCOUNTERED: '遇到的问题:',
 } as const
 

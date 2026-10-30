@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-sauce-aggregator",
   "description": "聚合多个搜图引擎查找图片出处，并从图源站获取作品详情与原图。",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "homepage": "https://github.com/YuzuharaYuka/koishi-plugin-sauce-aggregator",
   "repository": {
     "type": "git",
@@ -37,12 +37,14 @@
   "devDependencies": {
     "@koishijs/client": "^5.30.11",
     "@koishijs/plugin-console": "^5.30.11",
+    "@types/omggif": "^1",
     "vue": "^3.5.44"
   },
   "dependencies": {
     "@cwasm/webp": "^0.1.5",
     "@puppeteer/browsers": "^2.13.0",
     "cheerio": "^1.1.2",
+    "omggif": "^1.0.10",
     "puppeteer-core": "^24.43.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
